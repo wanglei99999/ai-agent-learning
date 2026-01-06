@@ -20,6 +20,8 @@
 │   ├── 12-护栏详解.md
 │   ├── 13-运行时详解.md
 │   ├── 14-上下文工程详解.md
+│   ├── 15-MCP详解.md
+│   ├── 16-HITL详解.md
 │   └── examples/
 ├── langgraph/              # LangGraph 学习笔记（待添加）
 └── README.md
@@ -42,9 +44,11 @@
 | 09 | [流式输出详解](./langchain/09-流式输出详解.md) | updates/messages/custom 模式 |
 | 10 | [结构化输出详解](./langchain/10-结构化输出详解.md) | Pydantic、ToolStrategy、ProviderStrategy |
 | 11 | [中间件详解](./langchain/11-中间件详解.md) | 钩子、内置中间件、自定义中间件 |
-| 12 | [护栏详解](./langchain/12-护栏详解.md) | PII 检测、人工审核、安全过滤 |
-| 13 | [运行时详解](./langchain/13-运行时详解.md) | Runtime、Context、依赖注入 |
+| 12 | [护栏详解](./langchain/12-护栏详解.md) | 确定性/模型护栏、输入/输出过滤 |
+| 13 | [运行时详解](./langchain/13-运行时详解.md) | Runtime、Context、State、Store |
 | 14 | [上下文工程详解](./langchain/14-上下文工程详解.md) | 模型/工具/生命周期上下文 |
+| 15 | [MCP 详解](./langchain/15-MCP详解.md) | Model Context Protocol、远程工具、拦截器 |
+| 16 | [HITL 详解](./langchain/16-HITL详解.md) | Human-in-the-Loop（人在回路）、approve/edit/reject |
 
 ### LangGraph
 
@@ -56,11 +60,13 @@
 |------|------|
 | Agent | 大模型 + 工具 + 自主决策 |
 | ReAct | 推理 + 行动的循环模式 |
-| State | 短期记忆，对话级 |
-| Store | 长期记忆，跨对话 |
-| Context | 运行时配置，只读 |
-| Middleware | 中间件，控制 Agent 行为 |
-| Checkpointer | 状态持久化 |
+| Context | 只读的配置信息和参数，通过依赖注入传递给工具和中间件 |
+| State | 当前会话的记忆，存储对话过程信息，作为上下文发送给模型 |
+| Store | 跨对话的持久化存储，功能与 State 类似但范围从会话级上升到用户级 |
+| Middleware | 中间件，控制 Agent 行为（钩子机制） |
+| Checkpointer | 状态持久化，支持中断恢复 |
+| MCP | Model Context Protocol，标准化远程工具协议 |
+| HITL | Human-in-the-Loop（人在回路），人工介入机制 |
 
 ## 环境配置
 
