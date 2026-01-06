@@ -22,6 +22,14 @@
 │   ├── 14-上下文工程详解.md
 │   ├── 15-MCP详解.md
 │   ├── 16-HITL详解.md
+│   ├── 17-多Agent概述.md
+│   ├── 18-Subagents模式.md
+│   ├── 19-Handoffs模式.md
+│   ├── 20-Skills模式.md
+│   ├── 21-Router模式.md
+│   ├── 22-自定义工作流.md
+│   ├── 23-RAG检索详解.md
+│   ├── 24-长期记忆详解.md
 │   └── examples/
 ├── langgraph/              # LangGraph 学习笔记（待添加）
 └── README.md
@@ -49,6 +57,14 @@
 | 14 | [上下文工程详解](./langchain/14-上下文工程详解.md) | 模型/工具/生命周期上下文 |
 | 15 | [MCP 详解](./langchain/15-MCP详解.md) | Model Context Protocol、远程工具、拦截器 |
 | 16 | [HITL 详解](./langchain/16-HITL详解.md) | Human-in-the-Loop（人在回路）、approve/edit/reject |
+| 17 | [多 Agent 概述](./langchain/17-多Agent概述.md) | 多 Agent 架构、模式选择 |
+| 18 | [Subagents 模式](./langchain/18-Subagents模式.md) | 子 Agent 委派、独立上下文 |
+| 19 | [Handoffs 模式](./langchain/19-Handoffs模式.md) | Agent 间控制权转移 |
+| 20 | [Skills 模式](./langchain/20-Skills模式.md) | 渐进式披露、提示词专门化 |
+| 21 | [Router 模式](./langchain/21-Router模式.md) | 语义路由、条件分发 |
+| 22 | [自定义工作流](./langchain/22-自定义工作流.md) | LangGraph 状态机、复杂流程编排 |
+| 23 | [RAG 检索详解](./langchain/23-RAG检索详解.md) | 检索增强生成、2-Step/Agentic/Hybrid RAG |
+| 24 | [长期记忆详解](./langchain/24-长期记忆详解.md) | Store、跨会话持久化、namespace/key |
 
 ### LangGraph
 
@@ -67,6 +83,12 @@
 | Checkpointer | 状态持久化，支持中断恢复 |
 | MCP | Model Context Protocol，标准化远程工具协议 |
 | HITL | Human-in-the-Loop（人在回路），人工介入机制 |
+| Multi-Agent | 多 Agent 协作架构 |
+| Subagents | 子 Agent 模式，委派任务给专门化 Agent |
+| Handoffs | 控制权转移模式，Agent 间切换 |
+| Skills | 技能模式，渐进式披露专门化提示词 |
+| Router | 路由模式，语义分发到专门化 Agent |
+| RAG | 检索增强生成，用外部知识增强 LLM 回答 |
 
 ## 环境配置
 
