@@ -30,6 +30,11 @@
 │   ├── 22-自定义工作流.md
 │   ├── 23-RAG检索详解.md
 │   ├── 24-长期记忆详解.md
+│   ├── 25-LangSmith Studio详解.md
+│   ├── 26-Agent测试详解.md
+│   ├── 27-Agent Chat UI详解.md
+│   ├── 28-LangSmith部署详解.md
+│   ├── 29-LangSmith可观测性详解.md
 │   └── examples/
 ├── langgraph/              # LangGraph 学习笔记（待添加）
 └── README.md
@@ -65,6 +70,11 @@
 | 22 | [自定义工作流](./langchain/22-自定义工作流.md) | LangGraph 状态机、复杂流程编排 |
 | 23 | [RAG 检索详解](./langchain/23-RAG检索详解.md) | 检索增强生成、2-Step/Agentic/Hybrid RAG |
 | 24 | [长期记忆详解](./langchain/24-长期记忆详解.md) | Store、跨会话持久化、namespace/key |
+| 25 | [LangSmith Studio 详解](./langchain/25-LangSmith%20Studio详解.md) | 可视化调试、执行轨迹、热重载 |
+| 26 | [Agent 测试详解](./langchain/26-Agent测试详解.md) | 单元测试、轨迹匹配、LLM 评判 |
+| 27 | [Agent Chat UI 详解](./langchain/27-Agent%20Chat%20UI详解.md) | 对话界面、工具可视化、时间旅行 |
+| 28 | [LangSmith 部署详解](./langchain/28-LangSmith部署详解.md) | 生产部署、GitHub 集成、API 调用 |
+| 29 | [LangSmith 可观测性详解](./langchain/29-LangSmith可观测性详解.md) | Trace 追踪、元数据、监控 |
 
 ### LangGraph
 
@@ -89,6 +99,10 @@
 | Skills | 技能模式，渐进式披露专门化提示词 |
 | Router | 路由模式，语义分发到专门化 Agent |
 | RAG | 检索增强生成，用外部知识增强 LLM 回答 |
+| LangSmith Studio | 免费的 Agent 可视化调试工具 |
+| AgentEvals | Agent 轨迹评估库 |
+| Agent Chat UI | 开源的 Agent 对话界面 |
+| Trace | 记录 Agent 执行的完整轨迹 |
 
 ## 环境配置
 
