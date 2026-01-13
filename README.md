@@ -5,29 +5,16 @@
 ## 目录结构
 
 ```
-├── langchain/              # LangChain 学习笔记
-│   ├── 01-环境搭建.md
-│   ├── 02-Agent核心概念.md
-│   ├── 03-快速入门完整示例.md
-│   ├── 04-Agent详解.md
-│   ├── 05-Models详解.md
-│   ├── 06-Messages详解.md
-│   ├── 07-Tools详解.md
-│   ├── 08-记忆系统详解.md          ⭐ 合并（短期+长期记忆）
-│   ├── 09-输出控制详解.md          ⭐ 合并（流式+结构化输出）
-│   ├── 10-中间件详解.md
-│   ├── 11-Guardrails.md
-│   ├── 12-Runtime详解.md
-│   ├── 13-上下文工程详解.md
-│   ├── 14-MCP详解.md
-│   ├── 15-HITL详解.md
-│   ├── 16-多Agent架构详解.md      ⭐ 合并（5种模式）
-│   ├── 17-LangSmith工具链详解.md  ⭐ 合并（Studio+测试+部署+监控）
-│   ├── 18-RAG检索详解.md
-│   ├── 19-Deep Research实践.md
-│   ├── data/                       # 示例数据
-│   └── examples/                   # 示例代码
-├── langgraph/              # LangGraph 学习笔记（待添加）
+├── langchain/                  # LangChain 学习笔记
+│   ├── docs/                   # 文档 (01-19)
+│   ├── data/                   # 示例数据
+│   └── examples/               # 示例代码
+├── langgraph/                  # LangGraph 学习笔记
+│   ├── docs/                   # 文档 (01-18)
+│   ├── data/                   # 数据
+│   ├── examples/               # 示例代码
+│   └── projects/               # 项目实践
+├── .env.example                # 环境变量模板
 └── README.md
 ```
 
@@ -39,49 +26,68 @@
 
 | 章节 | 内容 | 说明 |
 |------|------|------|
-| 01 | [环境搭建](./langchain/01-环境搭建.md) | uv、VSCode、依赖安装 |
-| 02 | [Agent 核心概念](./langchain/02-Agent核心概念.md) | Model、Tools、System Prompt |
-| 03 | [快速入门完整示例](./langchain/03-快速入门完整示例.md) | 完整天气查询 Agent |
-| 04 | [Agent 详解](./langchain/04-Agent详解.md) | ReAct、调用方式、状态管理 |
-| 05 | [Models 详解](./langchain/05-Models详解.md) | 模型初始化、调用、工具绑定 |
-| 06 | [Messages 详解](./langchain/06-Messages详解.md) | 消息类型、多模态、内容块 |
-| 07 | [Tools 详解](./langchain/07-Tools详解.md) | 工具定义、ToolRuntime、状态访问 |
+| 01 | [环境搭建](./langchain/docs/01-环境搭建.md) | uv、VSCode、依赖安装 |
+| 02 | [Agent 核心概念](./langchain/docs/02-Agent核心概念.md) | Model、Tools、System Prompt |
+| 03 | [快速入门完整示例](./langchain/docs/03-快速入门完整示例.md) | 完整天气查询 Agent |
+| 04 | [Agent 详解](./langchain/docs/04-Agent详解.md) | ReAct、调用方式、状态管理 |
+| 05 | [Models 详解](./langchain/docs/05-Models详解.md) | 模型初始化、调用、工具绑定 |
+| 06 | [Messages 详解](./langchain/docs/06-Messages详解.md) | 消息类型、多模态、内容块 |
+| 07 | [Tools 详解](./langchain/docs/07-Tools详解.md) | 工具定义、ToolRuntime、状态访问 |
 
 #### 核心功能篇
 
 | 章节 | 内容 | 说明 |
 |------|------|------|
-| 08 | [记忆系统详解](./langchain/08-记忆系统详解.md) | 短期记忆（State）+ 长期记忆（Store） |
-| 09 | [输出控制详解](./langchain/09-输出控制详解.md) | 流式输出 + 结构化输出 |
-| 10 | [中间件详解](./langchain/10-中间件详解.md) | 钩子、内置中间件、自定义中间件 |
-| 11 | [Guardrails](./langchain/11-Guardrails.md) | 确定性/模型护栏、输入/输出过滤 |
-| 12 | [Runtime 详解](./langchain/12-Runtime详解.md) | Runtime、Context、State、Store |
-| 13 | [上下文工程详解](./langchain/13-上下文工程详解.md) | 模型/工具/生命周期上下文 |
-| 14 | [MCP 详解](./langchain/14-MCP详解.md) | Model Context Protocol、远程工具 |
-| 15 | [HITL 详解](./langchain/15-HITL详解.md) | Human-in-the-Loop（人在回路） |
+| 08 | [记忆系统详解](./langchain/docs/08-记忆系统详解.md) | 短期记忆（State）+ 长期记忆（Store） |
+| 09 | [输出控制详解](./langchain/docs/09-输出控制详解.md) | 流式输出 + 结构化输出 |
+| 10 | [中间件详解](./langchain/docs/10-中间件详解.md) | 钩子、内置中间件、自定义中间件 |
+| 11 | [Guardrails](./langchain/docs/11-Guardrails.md) | 确定性/模型护栏、输入/输出过滤 |
+| 12 | [Runtime 详解](./langchain/docs/12-Runtime详解.md) | Runtime、Context、State、Store |
+| 13 | [上下文工程详解](./langchain/docs/13-上下文工程详解.md) | 模型/工具/生命周期上下文 |
+| 14 | [MCP 详解](./langchain/docs/14-MCP详解.md) | Model Context Protocol、远程工具 |
+| 15 | [HITL 详解](./langchain/docs/15-HITL详解.md) | Human-in-the-Loop（人在回路） |
 
 #### 多 Agent 架构篇
 
 | 章节 | 内容 | 说明 |
 |------|------|------|
-| 16 | [多 Agent 架构详解](./langchain/16-多Agent架构详解.md) | Subagents、Handoffs、Skills、Router、自定义工作流 |
+| 16 | [多 Agent 架构详解](./langchain/docs/16-多Agent架构详解.md) | Subagents、Handoffs、Skills、Router、自定义工作流 |
 
 #### LangSmith 工具链篇
 
 | 章节 | 内容 | 说明 |
 |------|------|------|
-| 17 | [LangSmith 工具链详解](./langchain/17-LangSmith工具链详解.md) | Studio、测试、Chat UI、部署、可观测性 |
+| 17 | [LangSmith 工具链详解](./langchain/docs/17-LangSmith工具链详解.md) | Studio、测试、Chat UI、部署、可观测性 |
 
 #### RAG 与实践篇
 
 | 章节 | 内容 | 说明 |
 |------|------|------|
-| 18 | [RAG 检索详解](./langchain/18-RAG检索详解.md) | 检索增强生成、2-Step/Agentic/Hybrid RAG |
-| 19 | [Deep Research 实践](./langchain/19-Deep%20Research实践.md) | 深度研究 Agent 实战 |
+| 18 | [RAG 检索详解](./langchain/docs/18-RAG检索详解.md) | 检索增强生成、2-Step/Agentic/Hybrid RAG |
+| 19 | [Deep Research 实践](./langchain/docs/19-Deep%20Research实践.md) | 深度研究 Agent 实战 |
 
 ### LangGraph
 
-待添加...
+| 章节 | 内容 | 说明 |
+|------|------|------|
+| 01 | [LangGraph 概述](./langgraph/docs/01-LangGraph概述.md) | 定位、核心能力、生态 |
+| 02 | [快速入门](./langgraph/docs/02-快速入门.md) | Graph API 与 Functional API 两种方式 |
+| 03 | [本地服务器](./langgraph/docs/03-本地服务器.md) | 本地开发与调试 |
+| 04 | [LangGraph 思维方式](./langgraph/docs/04-LangGraph思维方式.md) | 设计原则与建模方式 |
+| 05 | [工作流与 Agent 模式](./langgraph/docs/05-工作流与Agent模式.md) | 常见架构模式 |
+| 06 | [持久化详解](./langgraph/docs/06-持久化详解.md) | Checkpointer、状态持久化 |
+| 07 | [持久执行详解](./langgraph/docs/07-持久执行详解.md) | Durable Execution |
+| 08 | [流式输出详解](./langgraph/docs/08-流式输出详解.md) | stream/astream |
+| 09 | [中断机制详解](./langgraph/docs/09-中断机制详解.md) | interrupt / resume |
+| 10 | [Time Travel](./langgraph/docs/10-Time%20Travel.md) | 状态回溯与调试 |
+| 11 | [记忆系统详解](./langgraph/docs/11-记忆系统详解.md) | 短期+长期记忆 |
+| 12 | [子图详解](./langgraph/docs/12-子图详解.md) | 复用与模块化 |
+| 13 | [应用结构详解](./langgraph/docs/13-应用结构详解.md) | 项目组织方式 |
+| 14 | [测试详解](./langgraph/docs/14-测试详解.md) | 测试策略 |
+| 15 | [API 选择指南](./langgraph/docs/15-API选择指南.md) | Graph vs Functional |
+| 16 | [Graph API 完整指南](./langgraph/docs/16-Graph%20API完整指南.md) | Graph API：理论 + 实践 |
+| 17 | [Functional API 完整指南](./langgraph/docs/17-Functional%20API完整指南.md) | Functional API：理论 + 实践 |
+| 18 | [Runtime 详解](./langgraph/docs/18-Runtime详解.md) | Pregel 运行时底层 |
 
 ## 核心概念速查
 
@@ -115,8 +121,8 @@
 
 ## 环境配置
 
-1. 复制 `.env.example` 为 `.env`
-2. 填入你的 API Key
+1. 创建 `.env`（如需要）
+2. 填入你的 API Key（按你使用的模型供应商）
 
 ```bash
 # 创建虚拟环境
