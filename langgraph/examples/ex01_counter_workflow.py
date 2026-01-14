@@ -51,18 +51,31 @@ def repoet_node(state: CounterState):
     }
 
 # 3. 创建图
-
+workflow = StateGraph(CounterState) 
 
 # 4. 添加节点
-
+workflow.add_node("increment",increment)
+workflow.add_node("double",double_node)
+workflow.add_node("report",repoet_node)
 
 # 5. 连接节点
-
+workflow.add_edge(START,"increment")
+workflow.add_edge("increment","double")
+workflow.add_edge("double","report")
+workflow.add_edge("report",END)
 
 # 6. 编译
-
+app = workflow.compile()
 
 # 7. 运行
+result = app.invoke({
+    "count":5,
+    "history":["开始执行"]
+})
+print("执行历史:")
+for setp in result["history"]:
+    print(f"  - {setp}")
+print("\n最终计数:",result["count"])
 
     # 预期输出：
     # 执行历史:
