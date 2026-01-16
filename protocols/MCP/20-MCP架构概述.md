@@ -21,7 +21,7 @@ MCP 包含以下项目：
 
 MCP 采用客户端-服务器架构，包含三个核心角色：
 
-![MCP 架构图](../../langgraph/docs/fig/mcp-simple-diagram.avif)
+![MCP 架构图](../fig/mcp-simple-diagram.avif)
 
 | 角色 | 说明 | 示例 |
 |------|------|------|
