@@ -14,6 +14,13 @@
 │   ├── data/                   # 数据
 │   ├── examples/               # 示例代码
 │   └── projects/               # 项目实践
+├── hello_agent/                # 从零实现 Agent 框架
+│   ├── core/                   # 核心组件（LLM、工具执行器）
+│   ├── agents/                 # Agent 实现
+│   │   ├── react/              # ReAct Agent
+│   │   └── plan_solve/         # Plan-Solve Agent
+│   ├── tools/                  # 工具库（搜索等）
+│   └── examples/               # 运行示例
 ├── .env.example                # 环境变量模板
 └── README.md
 ```
@@ -89,6 +96,28 @@
 | 17 | [Functional API 完整指南](./langgraph/docs/17-Functional%20API完整指南.md) | Functional API：理论 + 实践 |
 | 18 | [Runtime 详解](./langgraph/docs/18-Runtime详解.md) | Pregel 运行时底层 |
 
+### Hello Agent（从零实现）
+
+手写 Agent 框架，深入理解 Agent 工作原理。
+
+| 组件 | 说明 |
+|------|------|
+| [ReAct Agent](./hello_agent/agents/react/) | 实现 Thought → Action → Observation 循环 |
+| [Plan-Solve Agent](./hello_agent/agents/plan_solve/) | 实现"先规划、再执行"架构 |
+| [核心组件](./hello_agent/core/) | LLM 客户端、工具执行器 |
+| [工具库](./hello_agent/tools/) | 搜索工具等 |
+
+**运行示例：**
+```bash
+# ReAct Agent
+python hello_agent/examples/run_react_agent.py
+
+# Plan-Solve Agent
+python hello_agent/examples/run_plan_solve_agent.py
+```
+
+详见 [hello_agent/README.md](./hello_agent/README.md)
+
 ## 核心概念速查
 
 | 概念 | 说明 |
@@ -121,16 +150,36 @@
 
 ## 环境配置
 
-1. 创建 `.env`（如需要）
-2. 填入你的 API Key（按你使用的模型供应商）
+### 依赖安装
 
 ```bash
 # 创建虚拟环境
 uv venv --python 3.11
-.venv\Scripts\activate
+.venv\Scripts\activate  # Windows
+# source .venv/bin/activate  # macOS/Linux
 
 # 安装依赖
-uv pip install langchain langchain-openai langgraph python-dotenv
+uv pip install langchain langchain-openai langgraph python-dotenv openai google-search-results
+```
+
+### API Key 配置
+
+1. 复制 `.env.example` 为 `.env`
+2. 填入你的 API Key
+
+```bash
+# LLM 提供商（选择一个）
+LLM_MODEL_ID=qwen-plus                    # 阿里通义千问
+LLM_API_KEY=sk-xxx
+LLM_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
+
+# 或使用 OpenAI
+# LLM_MODEL_ID=gpt-4
+# LLM_API_KEY=sk-xxx
+# LLM_BASE_URL=https://api.openai.com/v1
+
+# 搜索工具（可选）
+SERPAPI_API_KEY=your_serpapi_key
 ```
 
 ## 参考资源

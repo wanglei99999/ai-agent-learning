@@ -31,12 +31,12 @@ ReAct (Reasoning + Acting) 提示词模板
   代码需要用正则表达式解析出工具名和输入，然后调用对应的工具函数。
 
 - ReAct 循环流程：
-  用户问题 → LLM 思考 → 输出 Action → 代码解析并执行工具 
+  用户问题 → LLM 思考 → 输出 Action → 代码解析并执行工具
   → 返回 Observation → LLM 继续思考 → 直到输出 Finish[答案]
 
 使用示例：
 ---------
-from hello_agent.core.prompts import REACT_PROMPT_TEMPLATE
+from hello_agent.agents.react.prompts import REACT_PROMPT_TEMPLATE
 
 prompt = REACT_PROMPT_TEMPLATE.format(
     tools="- Search: 网页搜索工具\\n- Calculator: 数学计算工具",
