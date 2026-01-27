@@ -336,7 +336,6 @@ class MemoryTool(Tool):
             )
 
             return f"记忆已添加 (ID: {memory_id[:8]}...)"
-
         except Exception as e:
             return f"添加记忆失败: {str(e)}"
 

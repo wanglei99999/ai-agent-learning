@@ -8,6 +8,8 @@
 
 1. [适配器模式 (Adapter Pattern)](#适配器模式)
 2. [外观模式 (Facade Pattern)](#外观模式)
+3. [策略模式 (Strategy Pattern)](#策略模式)
+4. [装饰器模式 (Decorator Pattern)](#装饰器模式)
 
 ---
 
@@ -156,50 +158,500 @@ action="clear_all"   → _clear_all()
 
 ---
 
-## 🎯 两种模式的对比
+## 🎲 策略模式 (Strategy Pattern)
 
-| 维度 | 适配器模式 | 外观模式 |
-|------|-----------|---------|
-| **目的** | 解决接口不兼容问题 | 简化复杂系统的使用 |
-| **关注点** | 接口转换 | 提供统一入口 |
-| **类比** | 充电器转换插头 | 医院导诊台 |
-| **结构** | 包装一个对象 | 包装多个子系统 |
-| **使用场景** | 两个系统接口不匹配 | 系统太复杂，需要简化 |
+### 定义
+策略模式是一种行为型设计模式，它定义了一系列算法，并将每个算法封装起来，使它们可以相互替换，且算法的变化不会影响使用算法的客户。
+
+### 核心思想
+将不同的算法封装成独立的策略类，通过统一的接口调用，客户端可以动态选择使用哪种算法。
+
+### 生活中的例子
+- **出行方式选择**：去同一个目的地，可以选择开车、坐地铁、骑自行车、打车等不同策略
+- **支付方式**：购物结账时，可以选择微信支付、支付宝、信用卡等不同支付策略
+- **排序算法**：对数据排序，可以选择快速排序、归并排序、冒泡排序等不同策略
+
+### 代码示例
+
+```python
+# 策略接口（统一的方法签名）
+class MemoryBase:
+    def retrieve(self, query, limit, min_importance, user_id):
+        """所有记忆类型都实现这个方法"""
+        raise NotImplementedError
+
+# 具体策略1：工作记忆 - TF-IDF 检索
+class WorkingMemory(MemoryBase):
+    def retrieve(self, query, limit, min_importance, user_id):
+        # 策略1的具体实现
+        # 使用 TF-IDF 算法
+        # 纯内存检索
+        results = self._tfidf_search(query)
+        return results
+
+# 具体策略2：情景记忆 - 向量检索
+class EpisodicMemory(MemoryBase):
+    def retrieve(self, query, limit, min_importance, user_id):
+        # 策略2的具体实现
+        # 使用 Qdrant 向量数据库
+        # 语义相似度检索
+        results = self.qdrant_store.search(query)
+        return results
+
+# 具体策略3：语义记忆 - 知识图谱查询
+class SemanticMemory(MemoryBase):
+    def retrieve(self, query, limit, min_importance, user_id):
+        # 策略3的具体实现
+        # 使用知识图谱
+        # 关系推理
+        results = self._graph_query(query)
+        return results
+
+# 上下文类：MemoryManager
+class MemoryManager:
+    def __init__(self):
+        # 存储不同的策略实例
+        self.memory_types = {
+            'working': WorkingMemory(),    # 策略1
+            'episodic': EpisodicMemory(),  # 策略2
+            'semantic': SemanticMemory()   # 策略3
+        }
+    
+    def retrieve_memories(self, query, memory_types=None, limit=10):
+        """动态选择和使用策略"""
+        all_results = []
+        
+        # 如果未指定，使用所有策略
+        if memory_types is None:
+            memory_types = list(self.memory_types.keys())
+        
+        # 遍历选中的策略
+        for memory_type in memory_types:
+            memory_instance = self.memory_types[memory_type]
+            
+            # 调用策略方法（多态）
+            results = memory_instance.retrieve(
+                query=query,
+                limit=limit,
+                min_importance=0.0,
+                user_id=self.user_id
+            )
+            all_results.extend(results)
+        
+        return all_results
+```
+
+### 应用场景
+- 系统需要在多种算法中动态选择一种
+- 一个类定义了多种行为，这些行为在类的方法中以多个条件语句的形式出现
+- 算法需要独立于使用它的客户而变化
+
+### 优点
+- **开闭原则**：添加新策略不需要修改上下文代码
+- **避免条件语句**：消除大量的 if-else 或 switch-case
+- **算法独立**：每个策略可以独立演化和测试
+- **运行时切换**：可以在运行时动态选择算法
+
+### 缺点
+- 客户端必须了解所有策略的区别，以便选择合适的策略
+- 策略类数量增多，增加了系统复杂度
+
+### 实际应用
+
+**在 HelloAgents 项目中的应用**：
+- `MemoryManager` 管理多种记忆检索策略
+- 位置：`hello_agents/memory/manager.py`
+
+**不同记忆类型的检索策略**：
+
+| 记忆类型 | 检索策略 | 存储方式 | 适用场景 |
+|---------|---------|---------|---------|
+| **Working** | TF-IDF + 关键词匹配 | 纯内存 | 短期上下文 |
+| **Episodic** | 向量语义检索 | SQLite + Qdrant | 历史事件 |
+| **Semantic** | 知识图谱查询 | 图数据库 | 知识概念 |
+| **Perceptual** | 多模态检索 | 文件系统 + 向量 | 图片/音频 |
+
+**核心代码**：
+```python
+# manager.py 第 245-264 行
+for memory_type in memory_types:
+    if memory_type in self.memory_types:
+        memory_instance = self.memory_types[memory_type]  # 获取策略
+        try:
+            # 调用策略方法（多态）
+            # 不同类型有不同的检索策略
+            type_results = memory_instance.retrieve(
+                query=query,
+                limit=per_type_limit,
+                min_importance=min_importance,
+                user_id=self.user_id
+            )
+            all_results.extend(type_results)
+        except Exception as e:
+            logger.warning(f"检索 {memory_type} 记忆时出错: {e}")
+```
+
+### 策略模式的三要素
+
+1. **策略接口（Strategy Interface）**
+   - 所有记忆类型都实现 `retrieve()` 方法
+   - 统一的方法签名
+
+2. **具体策略（Concrete Strategies）**
+   - `WorkingMemory.retrieve()` - TF-IDF 算法
+   - `EpisodicMemory.retrieve()` - 向量检索
+   - `SemanticMemory.retrieve()` - 图查询
+
+3. **上下文（Context）**
+   - `MemoryManager` 持有策略实例
+   - 通过 `memory_types` 参数动态选择策略
+
+### 扩展性示例
+
+```python
+# 添加新策略非常容易
+class VectorMemory(MemoryBase):  # 新策略
+    def retrieve(self, query, limit, ...):
+        # 使用新的向量检索算法
+        return results
+
+# 只需在 MemoryManager 中注册
+manager.memory_types['vector'] = VectorMemory()
+
+# 不需要修改 retrieve_memories() 的代码！
+# 直接使用新策略
+manager.retrieve_memories(query="...", memory_types=['vector'])
+```
+
+---
+
+## � 装饰器模式 (Decorator Pattern)
+
+### 定义
+装饰器模式是一种结构型设计模式，允许向一个现有的对象动态添加新的功能，同时又不改变其结构。这种模式创建了一个装饰类，用来包装原有的类，并在保持类方法签名完整性的前提下，提供了额外的功能。
+
+### 核心思想
+在不修改原有对象的基础上，通过包装的方式为对象动态添加新功能。装饰器与被装饰对象实现相同的接口，可以层层嵌套。
+
+### 生活中的例子
+- **咖啡加料**：基础咖啡 → 加牛奶 → 加糖 → 加巧克力，每次加料都是一次装饰
+- **手机壳**：手机 → 保护壳 → 支架功能 → 卡包功能，每个配件都增强了功能
+- **房屋装修**：毛坯房 → 刷漆 → 贴壁纸 → 挂画，逐步增加装饰
+
+### Python 装饰器语法
+
+Python 提供了语法糖 `@decorator` 来简化装饰器的使用：
+
+```python
+# 装饰器函数
+def tool_action(name: str, description: str):
+    """装饰器：为方法添加工具元数据"""
+    def decorator(func):
+        # 为函数添加属性（装饰）
+        func._is_tool_action = True
+        func._tool_name = name
+        func._tool_description = description
+        return func
+    return decorator
+
+# 使用装饰器
+class MemoryTool:
+    @tool_action("memory_add", "添加新记忆")
+    def _add_memory(self, content: str, importance: float = 0.5):
+        """添加记忆到系统"""
+        return self.memory_manager.add_memory(content, importance)
+    
+    @tool_action("memory_search", "搜索相关记忆")
+    def _search_memory(self, query: str, limit: int = 5):
+        """搜索记忆"""
+        return self.memory_manager.retrieve_memories(query, limit)
+
+# 等价于（不使用语法糖）
+class MemoryTool:
+    def _add_memory(self, content: str, importance: float = 0.5):
+        return self.memory_manager.add_memory(content, importance)
+    
+    # 手动装饰
+    _add_memory = tool_action("memory_add", "添加新记忆")(_add_memory)
+```
+
+### 代码示例
+
+**完整的装饰器实现**：
+
+```python
+# base.py - 装饰器定义
+def tool_action(name: str = None, description: str = None):
+    """装饰器：标记一个方法为可展开的工具 action
+    
+    这个装饰器为方法添加元数据，使其可以被自动识别和展开为独立工具
+    """
+    def decorator(func: Callable):
+        # 添加标记属性
+        func._is_tool_action = True      # 标记这是一个工具方法
+        func._tool_name = name           # 工具名称
+        func._tool_description = description  # 工具描述
+        return func  # 返回被装饰的函数
+    return decorator
+
+# 使用装饰器
+class MemoryTool(Tool):
+    @tool_action("memory_add", "添加新记忆到记忆系统中")
+    def _add_memory(self, content: str, memory_type: str = "working", 
+                    importance: float = 0.5) -> str:
+        """添加记忆"""
+        memory_id = self.memory_manager.add_memory(
+            content=content,
+            memory_type=memory_type,
+            importance=importance
+        )
+        return f"记忆已添加 (ID: {memory_id[:8]}...)"
+    
+    @tool_action("memory_search", "搜索相关记忆")
+    def _search_memory(self, query: str, limit: int = 5) -> str:
+        """搜索记忆"""
+        results = self.memory_manager.retrieve_memories(query, limit)
+        return self._format_results(results)
+
+# 自动识别被装饰的方法
+class Tool:
+    def get_expanded_tools(self):
+        """自动从装饰器标记的方法生成子工具"""
+        tools = []
+        for name, method in inspect.getmembers(self, predicate=inspect.ismethod):
+            # 检查方法是否被 @tool_action 装饰
+            if hasattr(method, '_is_tool_action'):
+                # 自动生成独立工具
+                tool = AutoGeneratedTool(
+                    parent=self,
+                    method=method,
+                    name=method._tool_name,
+                    description=method._tool_description
+                )
+                tools.append(tool)
+        return tools
+```
+
+### 应用场景
+- 需要在运行时动态添加功能
+- 需要为对象添加多个可选功能，且功能可以组合
+- 不想通过继承来扩展功能（避免类爆炸）
+- 需要撤销某些功能
+
+### 优点
+- **开闭原则**：无需修改原有代码即可扩展功能
+- **灵活组合**：可以动态组合多个装饰器
+- **单一职责**：每个装饰器只负责一个功能
+- **可撤销**：可以动态添加或移除装饰
+
+### 缺点
+- 多层装饰会增加代码复杂度
+- 装饰器顺序可能影响结果
+- 调试时难以追踪装饰链
+
+### 实际应用
+
+**在 HelloAgents 项目中的应用**：
+- `@tool_action` 装饰器为方法添加工具元数据
+- 位置：`hello_agents/tools/base.py`
+
+**装饰器的作用**：
+
+1. **元数据注入**
+   ```python
+   @tool_action("memory_add", "添加新记忆")
+   def _add_memory(self, ...):
+       pass
+   
+   # 装饰后，方法获得新属性：
+   # _add_memory._is_tool_action = True
+   # _add_memory._tool_name = "memory_add"
+   # _add_memory._tool_description = "添加新记忆"
+   ```
+
+2. **自动工具生成**
+   ```python
+   # 当 expandable=True 时
+   tool = MemoryTool(expandable=True)
+   expanded_tools = tool.get_expanded_tools()
+   
+   # 返回：
+   # [
+   #   AutoGeneratedTool(name="memory_add", ...),
+   #   AutoGeneratedTool(name="memory_search", ...),
+   #   AutoGeneratedTool(name="memory_update", ...),
+   #   ...
+   # ]
+   ```
+
+3. **功能增强**
+   - 原方法：`_add_memory()` - 普通方法
+   - 装饰后：可以被自动识别、展开为独立工具、生成 OpenAI schema
+
+### 装饰器模式 vs 继承
+
+| 对比项 | 装饰器模式 | 继承 |
+|-------|-----------|------|
+| **扩展方式** | 运行时动态添加 | 编译时静态定义 |
+| **灵活性** | 高，可以任意组合 | 低，继承关系固定 |
+| **类数量** | 少，通过组合实现 | 多，容易类爆炸 |
+| **功能撤销** | 可以动态移除 | 不可撤销 |
+| **适用场景** | 需要动态、可选的功能 | 需要固定的功能扩展 |
+
+### 多层装饰示例
+
+```python
+# 可以叠加多个装饰器
+@log_execution  # 装饰器3：记录执行日志
+@validate_params  # 装饰器2：验证参数
+@tool_action("memory_add", "添加记忆")  # 装饰器1：添加工具元数据
+def _add_memory(self, content: str):
+    return self.memory_manager.add_memory(content)
+
+# 执行顺序（从下到上）：
+# 1. tool_action 装饰
+# 2. validate_params 装饰
+# 3. log_execution 装饰
+```
+
+### 实际效果对比
+
+**不使用装饰器**：
+```python
+class MemoryTool(Tool):
+    def _add_memory(self, content: str):
+        return self.memory_manager.add_memory(content)
+    
+    def _search_memory(self, query: str):
+        return self.memory_manager.retrieve_memories(query)
+    
+    # 需要手动注册每个方法
+    def get_expanded_tools(self):
+        return [
+            ManualTool(name="memory_add", method=self._add_memory, ...),
+            ManualTool(name="memory_search", method=self._search_memory, ...),
+            # 每个方法都要手动注册，容易遗漏
+        ]
+```
+
+**使用装饰器**：
+```python
+class MemoryTool(Tool):
+    @tool_action("memory_add", "添加记忆")
+    def _add_memory(self, content: str):
+        return self.memory_manager.add_memory(content)
+    
+    @tool_action("memory_search", "搜索记忆")
+    def _search_memory(self, query: str):
+        return self.memory_manager.retrieve_memories(query)
+    
+    # 自动识别所有被装饰的方法，无需手动注册
+    # get_expanded_tools() 由父类自动实现
+```
+
+---
+
+##  四种模式的对比
+
+| 维度 | 适配器模式 | 外观模式 | 策略模式 | 装饰器模式 |
+|------|-----------|---------|---------|-----------|
+| **类型** | 结构型 | 结构型 | 行为型 | 结构型 |
+| **目的** | 解决接口不兼容问题 | 简化复杂系统的使用 | 封装算法，使其可互换 | 动态添加功能 |
+| **关注点** | 接口转换 | 提供统一入口 | 算法选择 | 功能增强 |
+| **类比** | 充电器转换插头 | 医院导诊台 | 出行方式选择 | 咖啡加料 |
+| **结构** | 包装一个对象 | 包装多个子系统 | 封装多个算法 | 层层包装对象 |
+| **使用场景** | 两个系统接口不匹配 | 系统太复杂，需要简化 | 需要动态选择算法 | 需要动态添加功能 |
+| **核心特征** | 转换接口 | 简化调用 | 运行时切换 | 运行时增强 |
 
 ---
 
 ## 📝 学习心得
 
-### MemoryTool 中的协作
+### 四种模式在记忆系统中的协作
 
-在 `MemoryTool` 中，这两个模式完美配合：
+在 HelloAgents 的记忆系统中，这四种模式完美配合，形成了清晰的层次结构：
 
-1. **适配器模式**：
-   - `MemoryTool` 继承 `Tool` 基类（目标接口）
-   - 内部包含 `MemoryManager` 实例（被适配的对象）
-   - 将 `Tool.run()` 的调用转换为 `MemoryManager` 的方法调用
+#### 1. **适配器模式（MemoryTool）**
+- `MemoryTool` 继承 `Tool` 基类（目标接口）
+- 内部包含 `MemoryManager` 实例（被适配的对象）
+- 将 `Tool.run()` 的调用转换为 `MemoryManager` 的方法调用
 
-2. **外观模式**：
-   - `run()` 方法作为统一入口
-   - 通过 `action` 参数路由到不同的内部方法
-   - 隐藏了 9 种不同操作的复杂性
+#### 2. **外观模式（MemoryTool）**
+- `run()` 方法作为统一入口
+- 通过 `action` 参数路由到不同的内部方法
+- 隐藏了 9 种不同操作的复杂性
+
+#### 3. **策略模式（MemoryManager）**
+- 管理多种记忆类型（WorkingMemory、EpisodicMemory 等）
+- 每种类型使用不同的检索策略
+- 通过 `memory_types` 参数动态选择策略
+
+#### 4. **装饰器模式（@tool_action）**
+- 为 MemoryTool 的方法添加元数据
+- 支持自动工具展开功能
+- 无需修改原方法即可增强功能
+
+### 完整的调用链路
 
 ```python
+# 层次1：Agent 调用 MemoryTool
+agent.run({"action": "search", "query": "用户喜好"})
+    ↓
+# 层次2：MemoryTool（适配器 + 外观）
 class MemoryTool(Tool):  # ← 适配器：适配 Tool 接口
     
     def run(self, parameters):  # ← 外观：统一入口
         action = parameters.get("action")
         
-        # 外观模式：一个方法处理多种操作
-        if action == "add":
-            return self._add_memory(...)
-        elif action == "search":
+        # 外观模式：路由到具体方法
+        if action == "search":
             return self._search_memory(...)
     
-    def _add_memory(self, ...):
+    def _search_memory(self, query, memory_types, ...):
         # 适配器模式：调用 MemoryManager
-        return self.memory_manager.add_memory(...)
+        results = self.memory_manager.retrieve_memories(
+            query=query,
+            memory_types=memory_types
+        )
+        return formatted_results
+    ↓
+# 层次3：MemoryManager（策略模式）
+class MemoryManager:
+    def retrieve_memories(self, query, memory_types=None, ...):
+        all_results = []
+        
+        # 策略模式：遍历并调用不同策略
+        for memory_type in memory_types:
+            memory_instance = self.memory_types[memory_type]  # 获取策略
+            results = memory_instance.retrieve(...)  # 调用策略方法
+            all_results.extend(results)
+        
+        return all_results
+    ↓
+# 层次4：具体策略实现
+WorkingMemory.retrieve()   → TF-IDF 算法
+EpisodicMemory.retrieve()  → Qdrant 向量检索
+SemanticMemory.retrieve()  → 知识图谱查询
 ```
+
+### 设计优势
+
+这种多模式组合带来的好处：
+
+1. **清晰的职责分离**
+   - MemoryTool：接口适配 + 操作路由
+   - MemoryManager：策略管理 + 结果聚合
+   - 具体记忆类型：算法实现
+
+2. **高度可扩展**
+   - 添加新操作：在 MemoryTool 中添加新的 action
+   - 添加新策略：在 MemoryManager 中注册新的记忆类型
+   - 优化算法：修改具体策略类，不影响其他层
+
+3. **易于维护**
+   - 每个模式解决特定问题
+   - 修改影响范围小
+   - 代码结构清晰
 
 ---
 
@@ -208,8 +660,8 @@ class MemoryTool(Tool):  # ← 适配器：适配 Tool 接口
 - [ ] 单例模式 (Singleton Pattern)
 - [ ] 工厂模式 (Factory Pattern)
 - [ ] 观察者模式 (Observer Pattern)
-- [ ] 策略模式 (Strategy Pattern)
-- [ ] 装饰器模式 (Decorator Pattern)
+- [x] ~~策略模式 (Strategy Pattern)~~ ✅
+- [x] ~~装饰器模式 (Decorator Pattern)~~ ✅
 - [ ] 代理模式 (Proxy Pattern)
 
 ---

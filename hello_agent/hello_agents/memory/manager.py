@@ -243,8 +243,8 @@ class MemoryManager:
         per_type_limit = max(1, limit // len(memory_types))
 
         for memory_type in memory_types:
-            if memory_type in self.memory_types:
-                memory_instance = self.memory_types[memory_type]
+            if memory_type in self.memory_types: 
+                memory_instance = self.memory_types[memory_type] # 获取记忆类型实例
                 try:
                     # 调用各记忆类型自己的 retrieve() 方法
                     # 不同类型有不同的检索策略：
