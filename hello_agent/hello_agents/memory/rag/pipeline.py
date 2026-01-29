@@ -48,7 +48,6 @@ def _get_markitdown_instance():
         print("[WARNING] MarkItDown not available. Install with: pip install markitdown")
         return None
 
-
 def _is_markitdown_supported_format(path: str) -> bool:
     """
     Check if the file format is supported by MarkItDown.
@@ -84,7 +83,6 @@ def _is_markitdown_supported_format(path: str) -> bool:
     }
     return ext in supported_formats
 
-
 def _convert_to_markdown(path: str) -> str:
     """统一文档读取入口：文件 → 文本（markdown/纯文本）
 
@@ -104,152 +102,279 @@ def _convert_to_markdown(path: str) -> str:
     Returns:
         str: 提取到的文本内容；失败时返回空字符串。
     """
+    # 步骤1：文件存在性检查（防御性编程，避免后续 open() 报错）
     if not os.path.exists(path):
-        return ""
+        return ""  # 文件不存在，返回空字符串（不抛异常，让调用方继续处理其他文件）
     
-    # 对PDF文件使用增强处理
-    ext = (os.path.splitext(path)[1] or '').lower()
+    # 步骤2：提取文件扩展名并判断是否为 PDF
+    # 对PDF文件使用增强处理，pdf处理起来麻烦很多
+    ext = (os.path.splitext(path)[1] or '').lower()  # 提取扩展名："/path/to/file.PDF" → ".pdf"
     if ext == '.pdf':
+        # PDF 需要特殊处理（额外清理噪声），走专用通道
         return _enhanced_pdf_processing(path)
     
-    # 其他格式使用原有MarkItDown
-    md_instance = _get_markitdown_instance()
+    # 步骤3：其他格式使用 MarkItDown 通用转换
+    md_instance = _get_markitdown_instance()  # 获取 MarkItDown 实例（延迟加载）
     if md_instance is None:
+        # MarkItDown 未安装，熔断到简单文本读取
         return _fallback_text_reader(path)
     
     try:
-        result = md_instance.convert(path)
-        text = getattr(result, "text_content", None)
+        # 步骤4：调用 MarkItDown 转换文件
+        result = md_instance.convert(path)  # 转换文件（支持 Word/Excel/图片/音频等）
+        
+        # 步骤5：从结果对象中提取文本内容
+        text = getattr(result, "text_content", None)  # 防御性编程：如果没有该属性，返回 None
+        
+        # 步骤6：检查文本是否有效
         if isinstance(text, str) and text.strip():
+            # 文本有效（是字符串且不是空白），返回文本
             return text
+        
+        # 文本无效（None 或空白字符串），返回空字符串
         return ""
+        
     except Exception as e:
+        # 步骤7：异常处理（熔断机制）
+        # MarkItDown 转换失败（如文件损坏、格式不支持等），打印警告并降级
         print(f"[WARNING] MarkItDown failed for {path}: {e}")
-        return _fallback_text_reader(path)
+        return _fallback_text_reader(path)  # 熔断到最简单的文本读取
 
 def _enhanced_pdf_processing(path: str) -> str:
+    """增强型 PDF 处理：提取 + 后处理清理
+
+    教学理解：
+    - PDF 文件通过 OCR 或文本提取后，常含有页眉/页脚/页码等噪声。
+    - 本函数在 MarkItDown 提取基础上，额外做后处理清理，提升文本质量。
+
+    处理流程：
+    1) 使用 MarkItDown 提取原始文本
+    2) 调用 `_post_process_pdf_text()` 进行后处理：
+       - 移除页码、页眉页脚等噪声
+       - 智能合并被断行的短句
+       - 重组段落结构
+
+    Args:
+        path: PDF 文件路径。
+
+    Returns:
+        str: 清理后的文本内容；提取失败时返回空字符串。
     """
-    Enhanced PDF processing with post-processing cleanup.
-    """
+    # 打印日志：告知用户正在使用增强模式处理 PDF
     print(f"[RAG] Using enhanced PDF processing for: {path}")
     
-    # 使用原有MarkItDown提取
+    # 步骤1：获取 MarkItDown 实例（延迟加载，避免未安装时报错）
     md_instance = _get_markitdown_instance()
     if md_instance is None:
+        # 如果 MarkItDown 未安装，熔断到最简单的文本读取（虽然 PDF 读不了，但保证不崩溃）
         return _fallback_text_reader(path)
     
     try:
-        result = md_instance.convert(path)
-        raw_text = getattr(result, "text_content", None)
+        # 步骤2：使用 MarkItDown 提取 PDF 的原始文本
+        result = md_instance.convert(path)  # convert() 返回对象，不是字符串
+        
+        # 步骤3：从结果对象中提取文本内容（使用 getattr 防御性编程）
+        raw_text = getattr(result, "text_content", None)  # 如果没有 text_content 属性，返回 None
+        
+        # 步骤4：检查提取的文本是否有效
         if not raw_text or not raw_text.strip():
+            # 文本为空或只有空白字符，直接返回空字符串
             return ""
         
-        # 后处理：清理和重组文本
+        # 步骤5：后处理清理（核心步骤！）
+        # 调用 _post_process_pdf_text() 清理页眉页脚、合并断行、重组段落
         cleaned_text = _post_process_pdf_text(raw_text)
+        
+        # 步骤6：打印处理结果（显示清理前后的字符数变化）
         print(f"[RAG] PDF post-processing completed: {len(raw_text)} -> {len(cleaned_text)} chars")
         return cleaned_text
         
     except Exception as e:
+        # 步骤7：异常处理（熔断机制）
+        # 如果增强处理失败（如 PDF 损坏），打印警告并降级到简单读取
         print(f"[WARNING] Enhanced PDF processing failed for {path}: {e}")
         return _fallback_text_reader(path)
 
 def _post_process_pdf_text(text: str) -> str:
-    """
-    Post-process PDF text to improve quality.
+    """PDF 文本后处理：清理噪声 + 智能合并段落
+
+    教学理解：
+    - PDF 提取的文本常有"断行"问题：一句话被拆成多行。
+    - 本函数通过启发式规则，将碎片化的行重新组织成完整段落。
+
+    处理步骤：
+    1) **清理噪声行**：
+       - 移除单字符行、纯数字页码行
+       - 过滤常见页眉页脚关键词（如 'github', 'project'）
+    2) **智能合并短行**：
+       - 如果当前行 < 60 字符且下一行 < 120 字符，尝试合并
+       - 避免合并标题行（以 '#' 或 '：' 结尾）
+    3) **重组段落**：
+       - 识别段落边界（标题、长句、冒号结尾等）
+       - 将同一段落的行用空格连接，段落间用双换行分隔
+
+    Args:
+        text: 原始 PDF 提取文本。
+
+    Returns:
+        str: 清理并重组后的文本。
     """
     import re
     
-    # 1. 按行分割并清理
-    lines = text.splitlines()
-    cleaned_lines = []
+    # ========== 第一阶段：清理噪声行 ==========
+    # 将文本按行分割，逐行检查并过滤噪声
+    lines = text.splitlines()  # 分割成行列表：["第一行", "第二行", ...]
+    cleaned_lines = []  # 存储清理后的行
     
     for line in lines:
+        # 去除行首行尾的空白字符（空格、制表符等）
         line = line.strip()
+        
+        # 过滤规则1：跳过空行
         if not line:
             continue
             
-        # 移除单个字符的行（通常是噪音）
+        # 过滤规则2：移除单字符或双字符行（通常是噪音，如 "a", "1"）
+        # 但保留纯数字（如页码 "12"），后续会单独处理
         if len(line) <= 2 and not line.isdigit():
             continue
             
-        # 移除明显的页眉页脚噪音
-        if re.match(r'^\d+$', line):  # 纯数字行（页码）
+        # 过滤规则3：移除明显的页眉页脚噪音
+        # 3.1 纯数字行（页码）：如 "1", "23", "456"
+        if re.match(r'^\d+$', line):
             continue
+        
+        # 3.2 常见的页眉页脚关键词（不区分大小写）
+        # 如 GitHub 项目页面的 "GitHub", "Project", "Forks" 等
         if line.lower() in ['github', 'project', 'forks', 'stars', 'language']:
             continue
             
+        # 通过所有过滤规则，保留这一行
         cleaned_lines.append(line)
     
-    # 2. 智能合并短行
-    merged_lines = []
-    i = 0
+    # ========== 第二阶段：智能合并短行 ==========
+    # PDF 常见问题：一句话被断成多行，如 "这是一段很长的句子被\n断成了两行"
+    # 本阶段将这些被断开的短行重新合并成完整句子
+    merged_lines = []  # 存储合并后的行
+    i = 0  # 当前处理的行索引
     
     while i < len(cleaned_lines):
         current_line = cleaned_lines[i]
         
-        # 如果当前行很短，尝试与下一行合并
+        # 合并条件判断：当前行很短（< 60 字符）且还有下一行
         if len(current_line) < 60 and i + 1 < len(cleaned_lines):
             next_line = cleaned_lines[i + 1]
             
-            # 合并条件：都是内容，不是标题
+            # 检查是否应该合并（避免合并标题行）
+            # 不合并的情况：
+            # 1. 当前行以冒号结尾（可能是标题或列表项）
+            # 2. 当前行或下一行以 '#' 开头（Markdown 标题）
+            # 3. 下一行太长（> 120 字符，可能是独立段落）
             if (not current_line.endswith('：') and 
                 not current_line.endswith(':') and
                 not current_line.startswith('#') and
                 not next_line.startswith('#') and
                 len(next_line) < 120):
                 
+                # 满足合并条件：用空格连接两行
                 merged_line = current_line + " " + next_line
                 merged_lines.append(merged_line)
-                i += 2  # 跳过下一行
+                i += 2  # 跳过下一行（已经合并了）
                 continue
         
+        # 不满足合并条件，直接保留当前行
         merged_lines.append(current_line)
         i += 1
     
-    # 3. 重新组织段落
-    paragraphs = []
-    current_paragraph = []
+    # ========== 第三阶段：重新组织段落 ==========
+    # 将合并后的行重新组织成段落结构（段落间用双换行分隔）
+    paragraphs = []  # 存储最终的段落列表
+    current_paragraph = []  # 当前正在构建的段落（多行组成）
     
     for line in merged_lines:
-        # 检查是否是新段落的开始
-        if (line.startswith('#') or  # 标题
-            line.endswith('：') or   # 中文冒号结尾
-            line.endswith(':') or    # 英文冒号结尾
-            len(line) > 150 or       # 长句通常是段落开始
-            not current_paragraph):  # 第一行
-            
-            # 保存当前段落
+        # 判断是否是新段落的开始（段落边界识别）
+        is_paragraph_start = (
+            line.startswith('#') or      # 条件1：Markdown 标题（如 "# 第一章"）
+            line.endswith('：') or       # 条件2：中文冒号结尾（如 "引言："）
+            line.endswith(':') or        # 条件3：英文冒号结尾（如 "Introduction:"）
+            len(line) > 150 or           # 条件4：长句（> 150 字符，通常是段落开始）
+            not current_paragraph        # 条件5：第一行（当前段落为空）
+        )
+        
+        if is_paragraph_start:
+            # 这是新段落的开始，先保存之前累积的段落
             if current_paragraph:
+                # 将当前段落的多行用空格连接成一个段落
                 paragraphs.append(' '.join(current_paragraph))
-                current_paragraph = []
+                current_paragraph = []  # 清空，准备构建新段落
             
+            # 将当前行作为独立段落（标题或段落开始）
             paragraphs.append(line)
         else:
+            # 这是段落的延续，累积到当前段落
             current_paragraph.append(line)
     
-    # 添加最后一个段落
+    # 处理最后一个段落（循环结束后可能还有未保存的段落）
     if current_paragraph:
         paragraphs.append(' '.join(current_paragraph))
     
+    # 将所有段落用双换行连接（Markdown 段落分隔符）
     return '\n\n'.join(paragraphs)
 
-
 def _fallback_text_reader(path: str) -> str:
-    """
-    Simple fallback reader for basic text files when MarkItDown is unavailable.
+    """降级文本读取器：当 MarkItDown 不可用时的备选方案
+
+    教学理解：
+    - 如果 MarkItDown 未安装或解析失败，本函数提供最基础的文本读取。
+    - 仅适用于纯文本文件（.txt, .md, .py 等），不支持 PDF/Office 等复杂格式。
+
+    编码处理：
+    - 优先尝试 UTF-8 编码
+    - 失败时降级到 Latin-1 编码（兼容性更好，但可能乱码）
+    - 使用 `errors='ignore'` 忽略无法解码的字符
+
+    Args:
+        path: 文件路径。
+
+    Returns:
+        str: 文件文本内容；读取失败时返回空字符串。
     """
     try:
+        # 策略1：优先使用 UTF-8 编码读取（最常用的编码）
+        # errors='ignore'：遇到无法解码的字节直接跳过，不抛异常
         with open(path, 'r', encoding='utf-8', errors='ignore') as f:
-            return f.read()
+            return f.read()  # 成功读取，返回文本内容
+            
     except Exception:
+        # UTF-8 读取失败，尝试降级方案
         try:
+            # 策略2：使用 Latin-1 编码读取（兼容性最好，可以解码任何字节）
+            # Latin-1 的特点：0-255 的每个字节都有对应字符，不会抛 UnicodeDecodeError
+            # 缺点：可能乱码，但至少能读取内容
             with open(path, 'r', encoding='latin-1', errors='ignore') as f:
-                return f.read()
+                return f.read()  # 成功读取，返回文本内容（可能乱码）
+                
         except Exception:
-            return ""
-
+            # 策略3：彻底失败（文件无法打开，如权限问题、文件被占用等）
+            return ""  # 返回空字符串（熔断机制的最后一道防线，绝不崩溃）
 
 def _detect_lang(sample: str) -> str:
+    """检测文本语言（用于后续分词/chunking 策略）
+
+    教学理解：
+    - 不同语言的分词规则不同：中文按字符，英文按空格。
+    - 本函数使用 langdetect 库检测语言代码（如 'zh-cn', 'en', 'ja'）。
+
+    实现细节：
+    - 只取前 1000 字符进行检测（提高速度，避免超长文本）
+    - 如果 langdetect 未安装或检测失败，返回 "unknown"
+
+    Args:
+        sample: 待检测的文本样本。
+
+    Returns:
+        str: 语言代码（如 'zh-cn', 'en'）或 "unknown"。
+    """
     try:
         from langdetect import detect
         return detect(sample[:1000]) if sample else "unknown"
@@ -258,6 +383,27 @@ def _detect_lang(sample: str) -> str:
 
 
 def _is_cjk(ch: str) -> bool:
+    """判断字符是否为 CJK（中日韩）字符
+
+    教学理解：
+    - CJK 字符包括中文汉字、日文汉字、韩文汉字。
+    - 用于 token 长度估算：CJK 字符通常按 1 字符 = 1 token，而英文按单词计数。
+
+    Unicode 范围（覆盖常用和扩展区）：
+    - 0x4E00-0x9FFF: CJK 统一表意文字（基本区，最常用）
+    - 0x3400-0x4DBF: CJK 扩展 A
+    - 0x20000-0x2A6DF: CJK 扩展 B
+    - 0x2A700-0x2B73F: CJK 扩展 C/D
+    - 0x2B740-0x2B81F: CJK 扩展 E
+    - 0x2B820-0x2CEAF: CJK 扩展 F
+    - 0xF900-0xFAFF: CJK 兼容表意文字
+
+    Args:
+        ch: 单个字符。
+
+    Returns:
+        bool: True 表示该字符是 CJK 字符。
+    """
     code = ord(ch)
     return (
         0x4E00 <= code <= 0x9FFF or
@@ -271,6 +417,23 @@ def _is_cjk(ch: str) -> bool:
 
 
 def _approx_token_len(text: str) -> int:
+    """近似估算文本的 token 长度（用于 chunking）
+
+    教学理解：
+    - LLM 的输入限制通常以 token 为单位（如 GPT-3.5 的 4096 tokens）。
+    - 本函数提供快速估算，避免调用真实 tokenizer（速度慢）。
+
+    估算规则：
+    - **CJK 字符**：1 字符 ≈ 1 token（中文"你好"≈ 2 tokens）
+    - **非 CJK 文本**：按空格分词，1 单词 ≈ 1 token（英文 "hello world" ≈ 2 tokens）
+    - 这是粗略估算，实际 token 数可能有 ±20% 误差，但足够用于 chunking。
+
+    Args:
+        text: 待估算的文本。
+
+    Returns:
+        int: 估算的 token 数量。
+    """
     # 近似估计：CJK字符按1 token，其他按空白分词
     cjk = sum(1 for ch in text if _is_cjk(ch))
     non_cjk_tokens = len([t for t in text.split() if t])
@@ -278,100 +441,232 @@ def _approx_token_len(text: str) -> int:
 
 
 def _split_paragraphs_with_headings(text: str) -> List[Dict]:
+    """按 Markdown 标题层级切分段落，并记录章节路径
+
+    教学理解：
+    - Markdown 文档有层级结构（# 一级标题，## 二级标题...）。
+    - 本函数识别标题，将文档切分为段落，并为每个段落记录它所属的"章节路径"。
+
+    为什么要记录章节路径？
+    - 检索时可以显示"这段文本来自哪个章节"，提升可读性。
+    - 例如："第3章 > 3.2 RAG 原理 > 3.2.1 向量检索"
+
+    实现逻辑：
+    1) 维护一个 `heading_stack`（标题栈），记录当前所在的章节层级
+    2) 遇到标题行（以 '#' 开头）：
+       - 计算标题级别（'#' 的数量）
+       - 更新 `heading_stack`（弹出更深层级，压入当前标题）
+    3) 遇到普通文本行：累积到 `buf`，遇到空行时 flush 成一个段落
+    4) 每个段落记录：`content`, `heading_path`, `start`, `end`（字符偏移）
+
+    Args:
+        text: Markdown 格式的文本。
+
+    Returns:
+        List[Dict]: 段落列表，每项包含：
+            - content: 段落文本
+            - heading_path: 章节路径（如 "第1章 > 1.1 简介"）
+            - start: 起始字符位置
+            - end: 结束字符位置
+    """
+    # 步骤1：按行分割文本（保留原始行内容）
     lines = text.splitlines()
-    heading_stack: List[str] = []
-    paragraphs: List[Dict] = []
-    buf: List[str] = []
-    char_pos = 0
+    
+    # 步骤2：初始化核心数据结构
+    heading_stack: List[str] = []  # 标题栈：记录当前章节层级，如 ["第1章", "1.1节"]
+    paragraphs: List[Dict] = []    # 输出的段落列表
+    buf: List[str] = []            # 当前段落的行缓冲区（累积文本行）
+    char_pos = 0                   # 当前字符位置（用于记录段落的 start/end）
+    
+    # 步骤3：定义内部函数 flush_buf（将缓冲区内容保存为一个段落）
     def flush_buf(end_pos: int):
+        """将缓冲区的行合并成一个段落并保存"""
+        # 检查1：缓冲区为空，直接返回
         if not buf:
             return
-        content = "\n".join(buf).strip()
-        if not content:
+        
+        # 检查2：合并缓冲区的所有行，并去除首尾空白
+        content = "\n".join(buf).strip()  # 用换行符连接所有行
+        if not content:  # 内容为空（只有空白字符），直接返回
             return
+        
+        # 检查3：保存段落到输出列表
         paragraphs.append({
-            "content": content,
-            "heading_path": " > ".join(heading_stack) if heading_stack else None,
-            "start": max(0, end_pos - len(content)),
-            "end": end_pos,
+            "content": content,  # 段落文本
+            "heading_path": " > ".join(heading_stack) if heading_stack else None,  # 章节路径（如 "第1章 > 1.1节"）
+            "start": max(0, end_pos - len(content)),  # 起始字符位置（粗略估算）
+            "end": end_pos,  # 结束字符位置
         })
+    # 步骤4：逐行处理文本
     for ln in lines:
-        raw = ln
+        raw = ln  # 保存原始行（包含前导空格）
+        
+        # ========== 情况1：标题行（以 '#' 开头）==========
         if raw.strip().startswith("#"):
-            # heading line
+            # 步骤4.1：先保存之前累积的段落（标题是段落的分隔符）
             flush_buf(char_pos)
-            level = len(raw) - len(raw.lstrip('#'))
+            
+            # 步骤4.2：计算标题级别（'#' 的数量）
+            # 例如："## 1.1节" → level = 2
+            level = len(raw) - len(raw.lstrip('#'))  # 原始长度 - 去除 '#' 后的长度 = '#' 的数量
+            
+            # 步骤4.3：提取标题文本（去除 '#' 和空白）
+            # 例如："## 1.1节  " → "1.1节"
             title = raw.lstrip('#').strip()
+            
+            # 步骤4.4：修正级别（至少为 1）
             if level <= 0:
                 level = 1
+            
+            # 步骤4.5：更新标题栈（维护章节层级）
+            # 如果新标题的级别 <= 栈的长度，需要弹出更深层级的标题
+            # 例如：栈 = ["第1章", "1.1节", "1.1.1小节"]，新标题级别 = 2
+            #      → 弹出到 ["第1章"]，然后压入新标题
             if level <= len(heading_stack):
-                heading_stack = heading_stack[:level-1]
+                heading_stack = heading_stack[:level-1]  # 保留前 level-1 个标题
+            
+            # 步骤4.6：将当前标题压入栈
             heading_stack.append(title)
+            
+            # 步骤4.7：更新字符位置（+1 是换行符）
             char_pos += len(raw) + 1
-            continue
-        # paragraph accumulation
+            continue  # 跳过后续处理，继续下一行
+        # ========== 情况2：普通文本行 ==========
         if raw.strip() == "":
-            flush_buf(char_pos)
-            buf = []
+            # 情况2.1：空行（段落分隔符）
+            flush_buf(char_pos)  # 保存当前段落
+            buf = []  # 清空缓冲区，准备下一个段落
         else:
-            buf.append(raw)
+            # 情况2.2：非空行（段落内容）
+            buf.append(raw)  # 累积到缓冲区
+        
+        # 更新字符位置（+1 是换行符）
         char_pos += len(raw) + 1
+    
+    # 步骤5：处理最后一个段落（循环结束后可能还有未保存的段落）
     flush_buf(char_pos)
+    
+    # 步骤6：兜底处理（如果整个文档没有标题和空行，返回整个文本作为一个段落）
     if not paragraphs:
         paragraphs = [{"content": text, "heading_path": None, "start": 0, "end": len(text)}]
+    
     return paragraphs
 
 
-def _chunk_paragraphs(paragraphs: List[Dict], chunk_tokens: int, overlap_tokens: int) -> List[Dict]:
-    chunks: List[Dict] = []
-    cur: List[Dict] = []
-    cur_tokens = 0
-    i = 0
+def _chunk_paragraphs(paragraphs: List[Dict], chunk_size: int = 800, chunk_overlap: int = 100) -> List[Dict]:
+    """将段落列表按 token 长度合并成 chunks（支持重叠）
+
+    教学理解：
+    - 段落可能太短（几十字）或太长（几千字），不适合直接作为检索单元。
+    - 本函数将多个段落合并成"大小适中"的 chunk，并支持 chunk 间重叠。
+
+    为什么要重叠？
+    - 避免关键信息被切分到两个 chunk 的边界处，导致检索时丢失上下文。
+    - 例如：chunk1 末尾是"RAG 的核心是"，chunk2 开头是"向量检索"。
+      如果有重叠，chunk2 会包含"RAG 的核心是向量检索"，语义更完整。
+
+    实现逻辑：
+    1) 维护当前 chunk 的段落列表 `cur` 和累计长度 `cur_len`
+    2) 逐个添加段落，如果 `cur_len >= chunk_size`，则 flush 成一个 chunk
+    3) Flush 后，保留最后几个段落（总长度 ≈ chunk_overlap）作为下一个 chunk 的开头
+
+    Args:
+        paragraphs: `_split_paragraphs_with_headings()` 的输出。
+        chunk_size: 目标 chunk 大小（按 token 估算）。
+        chunk_overlap: chunk 重叠大小（按 token 估算）。
+
+    Returns:
+        List[Dict]: chunk 列表，每项包含：
+            - content: 合并后的文本
+            - start: 起始字符位置（取第一个段落的 start）
+            - end: 结束字符位置（取最后一个段落的 end）
+            - heading_path: 章节路径（取最后一个有 heading_path 的段落）
+    """
+    # 步骤1：初始化核心数据结构
+    chunks: List[Dict] = []  # 输出的 chunk 列表
+    cur: List[Dict] = []     # 当前正在构建的 chunk（段落列表）
+    cur_tokens = 0           # 当前 chunk 的累计 token 数
+    i = 0                    # 段落索引（当前处理到第几个段落）
+    
+    # 步骤2：逐个处理段落，合并成 chunks
     while i < len(paragraphs):
+        # 步骤2.1：获取当前段落并估算其 token 数
         p = paragraphs[i]
-        p_tokens = _approx_token_len(p["content"]) or 1
-        if cur_tokens + p_tokens <= chunk_tokens or not cur:
+        p_tokens = _approx_token_len(p["content"]) or 1  # 估算 token 数（至少为 1，避免除零错误）
+        
+        # 步骤2.2：判断是否可以将当前段落添加到当前 chunk
+        # 条件1：添加后不超过 chunk_size
+        # 条件2：当前 chunk 为空（必须至少有一个段落，即使超限）
+        if cur_tokens + p_tokens <= chunk_size or not cur:
+            # 可以添加：将段落加入当前 chunk
             cur.append(p)
-            cur_tokens += p_tokens
-            i += 1
+            cur_tokens += p_tokens  # 更新累计 token 数
+            i += 1  # 移动到下一个段落
         else:
-            # emit current chunk
-            content = "\n\n".join(x["content"] for x in cur)
-            start = cur[0]["start"]
-            end = cur[-1]["end"]
+            # ========== 步骤2.3：不能添加，需要 flush 当前 chunk ==========
+            
+            # 步骤2.3.1：合并当前 chunk 的所有段落
+            content = "\n\n".join(x["content"] for x in cur)  # 用双换行连接段落（Markdown 段落分隔符）
+            
+            # 步骤2.3.2：提取 chunk 的元数据
+            start = cur[0]["start"]  # 第一个段落的起始位置
+            end = cur[-1]["end"]     # 最后一个段落的结束位置
+            
+            # 步骤2.3.3：提取 heading_path（从后往前找第一个有 heading_path 的段落）
+            # 为什么从后往前？因为最后一个段落的 heading_path 最能代表整个 chunk 的主题
             heading_path = next((x["heading_path"] for x in reversed(cur) if x.get("heading_path")), None)
+            
+            # 步骤2.3.4：保存 chunk 到输出列表
             chunks.append({
                 "content": content,
                 "start": start,
                 "end": end,
                 "heading_path": heading_path,
             })
-            # build overlap by keeping tail tokens
-            if overlap_tokens > 0 and cur:
-                kept: List[Dict] = []
-                kept_tokens = 0
+            # ========== 步骤2.3.5：构建重叠（保留当前 chunk 的末尾部分作为下一个 chunk 的开头）==========
+            # 注意：代码中应该是 chunk_overlap，这里假设变量名为 overlap_tokens
+            if chunk_overlap > 0 and cur:
+                # 从后往前保留段落，直到累计 token 数接近 chunk_overlap
+                kept: List[Dict] = []  # 保留的段落列表
+                kept_tokens = 0        # 保留的累计 token 数
+                
+                # 从后往前遍历当前 chunk 的段落
                 for x in reversed(cur):
-                    t = _approx_token_len(x["content"]) or 1
-                    if kept_tokens + t > overlap_tokens:
+                    t = _approx_token_len(x["content"]) or 1  # 估算段落的 token 数
+                    
+                    # 如果加上这个段落会超过重叠限制，停止
+                    if kept_tokens + t > chunk_overlap:
                         break
+                    
+                    # 保留这个段落
                     kept.append(x)
                     kept_tokens += t
+                
+                # 反转回正序（因为是从后往前遍历的）
                 cur = list(reversed(kept))
                 cur_tokens = kept_tokens
             else:
+                # 不需要重叠，清空当前 chunk
                 cur = []
                 cur_tokens = 0
+    # 步骤3：处理最后一个 chunk（循环结束后可能还有未保存的段落）
     if cur:
+        # 合并段落
         content = "\n\n".join(x["content"] for x in cur)
+        
+        # 提取元数据
         start = cur[0]["start"]
         end = cur[-1]["end"]
         heading_path = next((x["heading_path"] for x in reversed(cur) if x.get("heading_path")), None)
+        
+        # 保存最后一个 chunk
         chunks.append({
             "content": content,
             "start": start,
             "end": end,
             "heading_path": heading_path,
         })
+    
     return chunks
  
  
@@ -420,69 +715,137 @@ def load_and_chunk_texts(paths: List[str], chunk_size: int = 800, chunk_overlap:
         >>> chunks[0]['metadata'].get('source_path')
         './docs/intro.pdf'
     """
+    # 打印开始日志（方便调试和监控）
     print(f"[RAG] Universal loader start: files={len(paths)} chunk_size={chunk_size} overlap={chunk_overlap} ns={namespace or 'default'}")
-    chunks: List[Dict] = []
-    seen_hashes = set()
     
+    # 初始化输出列表和去重集合
+    chunks: List[Dict] = []  # 最终输出的 chunk 列表
+    seen_hashes = set()      # 用于去重的内容哈希集合（避免重复内容被多次索引）
+    
+    # ========== 步骤1：遍历所有文件 ==========
     for path in paths:
+        # 步骤1.1：检查文件是否存在
         if not os.path.exists(path):
             print(f"[WARNING] File not found: {path}")
-            continue
+            continue  # 跳过不存在的文件
             
         print(f"[RAG] Processing: {path}")
+        
+        # 步骤1.2：提取文件扩展名（用于记录到 metadata）
+        # 例如："./docs/intro.pdf" → ".pdf"
         ext = (os.path.splitext(path)[1] or '').lower()
         
-        # Convert to markdown using MarkItDown
+        # ========== 步骤2：转换为 Markdown ==========
+        # 使用 MarkItDown 将各种格式（PDF、Word、Excel 等）统一转换为 Markdown
         markdown_text = _convert_to_markdown(path)
+        
+        # 步骤2.1：检查是否成功提取内容
         if not markdown_text.strip():
             print(f"[WARNING] No content extracted from: {path}")
-            continue
+            continue  # 跳过空文件
         
+        # ========== 步骤3：检测语言并生成文档 ID ==========
+        # 步骤3.1：检测文档语言（如 "zh-cn", "en"）
         lang = _detect_lang(markdown_text)
+        
+        # 步骤3.2：生成文档 ID（基于路径和文本长度的 MD5 哈希）
+        # 为什么用 MD5？确保相同文件生成相同 ID，支持增量更新
         doc_id = hashlib.md5(f"{path}|{len(markdown_text)}".encode('utf-8')).hexdigest()
         
-        # Always use markdown-aware chunking for better structure preservation
+        # ========== 步骤4：切分文档为 chunks ==========
+        # 步骤4.1：按标题和段落切分（保留章节结构）
         para = _split_paragraphs_with_headings(markdown_text)
+        
+        # 步骤4.2：按 token 大小合并段落（控制 chunk 大小）
+        # max(1, chunk_size) 确保至少为 1，避免参数错误
         token_chunks = _chunk_paragraphs(para, chunk_tokens=max(1, chunk_size), overlap_tokens=max(0, chunk_overlap))
         
+        # ========== 步骤5：为每个 chunk 生成完整对象 ==========
         for ch in token_chunks:
-            content = ch["content"]
-            start = ch.get("start", 0)
-            end = ch.get("end", start + len(content))
+            # 步骤5.1：提取 chunk 的基本信息
+            content = ch["content"]  # chunk 文本内容
+            start = ch.get("start", 0)  # 起始字符位置
+            end = ch.get("end", start + len(content))  # 结束字符位置
+            
+            # 步骤5.2：去除首尾空白并检查是否为空
             norm = content.strip()
             if not norm:
-                continue
+                continue  # 跳过空 chunk
                 
+            # ========== 步骤5.3：内容去重 ==========
+            # 计算内容的 MD5 哈希（用于检测重复内容）
             content_hash = hashlib.md5(norm.encode('utf-8')).hexdigest()
-            if content_hash in seen_hashes:
-                continue
-            seen_hashes.add(content_hash)
             
+            # 检查是否已经处理过相同内容
+            if content_hash in seen_hashes:
+                continue  # 跳过重复内容（避免重叠部分被多次索引）
+            seen_hashes.add(content_hash)  # 记录已处理的内容哈希
+            
+            # ========== 步骤5.4：生成稳定的 chunk ID ==========
+            # 组成：doc_id + 位置信息 + 内容哈希
+            # 为什么这样设计？确保相同内容在相同位置生成相同 ID，支持增量更新
             chunk_id = hashlib.md5(f"{doc_id}|{start}|{end}|{content_hash}".encode('utf-8')).hexdigest()
+            
+            # ========== 步骤5.5：组装完整的 chunk 对象 ==========
             chunks.append({
-                "id": chunk_id,
-                "content": content,
+                "id": chunk_id,  # 唯一标识符
+                "content": content,  # chunk 文本内容
                 "metadata": {
-                    "source_path": path,
-                    "file_ext": ext,
-                    "doc_id": doc_id,
-                    "lang": lang,
-                    "start": start,
-                    "end": end,
-                    "content_hash": content_hash,
-                    "namespace": namespace or "default",
-                    "source": source_label,
-                    "external": True,
-                    "heading_path": ch.get("heading_path"),
-                    "format": "markdown",  # Mark all content as markdown-processed
+                    # 来源信息
+                    "source_path": path,  # 原始文件路径
+                    "file_ext": ext,  # 文件扩展名（如 ".pdf"）
+                    "doc_id": doc_id,  # 文档 ID
+                    
+                    # 文本属性
+                    "lang": lang,  # 语言（如 "zh-cn"）
+                    "start": start,  # 起始字符位置
+                    "end": end,  # 结束字符位置
+                    "content_hash": content_hash,  # 内容哈希（用于去重）
+                    
+                    # 命名空间和来源标签（用于隔离和过滤）
+                    "namespace": namespace or "default",  # 逻辑命名空间（隔离不同知识库）
+                    "source": source_label,  # 来源标识（如 "rag_pipeline"）
+                    "external": True,  # 外部数据标记
+                    
+                    # 章节信息
+                    "heading_path": ch.get("heading_path"),  # 章节路径（如 "第1章 > 1.1节"）
+                    
+                    # 格式标记
+                    "format": "markdown",  # 标记所有内容都经过 Markdown 处理
                 },
             })
             
+    # 打印完成日志
     print(f"[RAG] Universal loader done: total_chunks={len(chunks)}")
     return chunks
 
 
 def build_graph_from_chunks(neo4j, chunks: List[Dict]) -> None:
+    """从 chunks 构建知识图谱（可选功能，需要 Neo4j）
+
+    教学理解：
+    - 除了向量检索，还可以用图数据库（Neo4j）存储文档结构关系。
+    - 本函数将 chunks 转换为图节点和边，便于后续做图遍历查询。
+
+    图结构设计：
+    - **节点类型**：
+      - `Document`：文档节点（一个文件对应一个 Document）
+      - `Memory`：chunk 节点（每个 chunk 对应一个 Memory）
+    - **关系类型**：
+      - `HAS_CHUNK`：Document → Memory（文档包含哪些 chunks）
+
+    使用场景：
+    - 查询"这个文档有哪些 chunks"
+    - 查询"这个 chunk 来自哪个文档"
+    - 结合向量检索和图遍历，实现混合检索
+
+    Args:
+        neo4j: Neo4j 图数据库实例（需实现 add_entity/add_relationship 接口）。
+        chunks: `load_and_chunk_texts()` 的输出。
+
+    Returns:
+        None（直接写入 Neo4j，异常时静默忽略）。
+    """
     created_docs = set()
     for ch in chunks:
         mem_id = ch["id"]
@@ -517,9 +880,28 @@ def build_graph_from_chunks(neo4j, chunks: List[Dict]) -> None:
 
 
 def _preprocess_markdown_for_embedding(text: str) -> str:
-    """
-    Preprocess markdown text for better embedding quality.
-    Removes excessive markup while preserving semantic content.
+    """预处理 Markdown 文本，提升 embedding 质量
+
+    教学理解：
+    - Markdown 标记符号（如 `**`, `#`, `[]()`）对语义贡献不大，但会占用 token。
+    - 本函数移除这些标记，保留纯文本内容，让 embedding 模型更专注于语义。
+
+    处理规则：
+    1) **移除标题符号**：`# 标题` → `标题`
+    2) **移除链接标记**：`[文本](url)` → `文本`
+    3) **移除强调标记**：`**粗体**` → `粗体`，`*斜体*` → `斜体`
+    4) **移除代码标记**：`` `代码` `` → `代码`，` ```代码块``` ` → `代码块`
+    5) **清理多余空白**：连续换行 → 双换行，多个空格 → 单空格
+
+    为什么要做这个？
+    - Embedding 模型对"RAG 原理"和"**RAG 原理**"可能产生不同向量。
+    - 预处理后统一格式，提升检索一致性。
+
+    Args:
+        text: 原始 Markdown 文本。
+
+    Returns:
+        str: 清理后的纯文本。
     """
     import re
     
@@ -545,9 +927,27 @@ def _preprocess_markdown_for_embedding(text: str) -> str:
 
 
 def _create_default_vector_store(dimension: int = None) -> QdrantVectorStore:
-    """
-    Create default Qdrant vector store with RAG-optimized settings.
-    使用连接管理器避免重复连接。
+    """创建默认的 Qdrant 向量库实例（RAG 专用配置）
+
+    教学理解：
+    - Qdrant 是一个向量数据库，专门用于存储和检索高维向量。
+    - 本函数创建一个配置好的 Qdrant 实例，供 RAG pipeline 使用。
+
+    配置说明：
+    - **dimension**：向量维度（由 embedding 模型决定，如 384 或 768）
+    - **distance**：相似度度量方式，使用 "cosine"（余弦相似度）
+    - **collection_name**：集合名称，默认 "hello_agents_rag_vectors"
+    - **连接管理器**：使用单例模式，避免重复创建连接
+
+    环境变量：
+    - `QDRANT_URL`：Qdrant 服务地址（如 "http://localhost:6333"）
+    - `QDRANT_API_KEY`：API 密钥（云端 Qdrant 需要）
+
+    Args:
+        dimension: 向量维度，None 时自动从 embedding 模型获取。
+
+    Returns:
+        QdrantVectorStore: 配置好的 Qdrant 实例。
     """
     if dimension is None:
         dimension = get_dimension(384)
@@ -613,84 +1013,118 @@ def index_chunks(
         >>> index_chunks(store=store, chunks=chunks, rag_namespace="default")
         >>> # 写入成功时无返回值；失败会抛 RuntimeError
     """
+    # ========== 步骤0：前置检查 ==========
     if not chunks:
         print("[RAG] No chunks to index")
-        return
+        return  # 没有 chunks 需要索引，直接返回
     
-    # Use unified embedding from embedding module
+    # ========== 步骤1：获取 embedding 模型和向量维度 ==========
+    # 获取统一的 embedding 模型（可能是云端 API 或本地模型）
     embedder = get_text_embedder()
-    dimension = get_dimension(384)
+    # 获取向量维度（由 embedding 模型决定，如 384 或 1536）
+    dimension = get_dimension(384)  # 默认 384，实际会从模型配置中获取
     
-    # Create default Qdrant store if not provided
+    # ========== 步骤2：创建或使用向量库 ==========
     if store is None:
+        # 如果没有提供 store，创建默认的 Qdrant 实例
         store = _create_default_vector_store()
         print(f"[RAG] Created default Qdrant store with dimension {dimension}")
     
-    # Preprocess markdown texts for better embeddings
+    # ========== 步骤3：预处理文本（移除 Markdown 标记） ==========
+    # 为什么要预处理？
+    # - 移除 Markdown 符号（如 **, #, []()），减少噪声
+    # - 统一格式，提升 embedding 质量和检索一致性
     processed_texts = []
     for c in chunks:
-        raw_content = c["content"]
+        raw_content = c["content"]  # 原始 Markdown 文本
+        # 移除 Markdown 标记，保留纯文本
         processed_content = _preprocess_markdown_for_embedding(raw_content)
         processed_texts.append(processed_content)
     
     print(f"[RAG] Embedding start: total_texts={len(processed_texts)} batch_size={batch_size}")
     
-    # Batch encoding with unified embedder
-    vecs: List[List[float]] = []
+    # ========== 步骤4：批量向量化 ==========
+    # 为什么要批量处理？提升效率，一次处理多个文本
+    vecs: List[List[float]] = []  # 存储所有向量
+    
     for i in range(0, len(processed_texts), batch_size):
-        part = processed_texts[i:i+batch_size]
+        # 步骤4.1：获取当前批次的文本
+        part = processed_texts[i:i+batch_size]  # 切片获取一批文本
+        
         try:
-            # Use unified embedder directly (handles caching internally)
+            # 步骤4.2：调用 embedding 模型进行向量化
+            # embedder.encode() 内部会处理缓存，避免重复计算
             part_vecs = embedder.encode(part)
             
-            # Normalize to List[List[float]]
+            # ========== 步骤4.3：标准化向量格式 ==========
+            # 为什么要标准化？不同 embedding 模型的返回格式不同：
+            # - OpenAI: List[List[float]]
+            # - SentenceTransformer: numpy.ndarray
+            # - 本地模型: 可能是各种格式
+            # 我们需要统一转换为 List[List[float]]
+            
             if not isinstance(part_vecs, list):
-                # 单个numpy数组转为列表中的列表
+                # 情况1：返回的是单个 numpy 数组（如只有一个文本）
                 if hasattr(part_vecs, "tolist"):
-                    part_vecs = [part_vecs.tolist()]
+                    part_vecs = [part_vecs.tolist()]  # numpy.ndarray → [[...]]
                 else:
-                    part_vecs = [list(part_vecs)]
+                    part_vecs = [list(part_vecs)]  # 其他可迭代对象 → [[...]]
             else:
-                # 检查是否是嵌套列表
+                # 情况2：返回的是列表，但需要检查内部元素的类型
                 if part_vecs and not isinstance(part_vecs[0], (list, tuple)) and hasattr(part_vecs[0], "__len__"):
-                    # numpy数组列表 -> 转换每个数组
+                    # 情况2.1：列表中的元素是 numpy 数组
+                    # 例如：[array([0.1, 0.2]), array([0.3, 0.4])]
                     normalized_vecs = []
                     for v in part_vecs:
                         if hasattr(v, "tolist"):
-                            normalized_vecs.append(v.tolist())
+                            normalized_vecs.append(v.tolist())  # numpy → list
                         else:
-                            normalized_vecs.append(list(v))
+                            normalized_vecs.append(list(v))  # 其他 → list
                     part_vecs = normalized_vecs
                 elif part_vecs and not isinstance(part_vecs[0], (list, tuple)):
-                    # 单个向量被误判为列表，实际应该包装成[[...]]
+                    # 情况2.2：单个向量被误判为列表
+                    # 例如：[0.1, 0.2, 0.3] 应该是 [[0.1, 0.2, 0.3]]
                     if hasattr(part_vecs, "tolist"):
                         part_vecs = [part_vecs.tolist()]
                     else:
                         part_vecs = [list(part_vecs)]
             
+            # ========== 步骤4.4：逐个处理向量并检查维度 ==========
             for v in part_vecs:
                 try:
-                    # 确保向量是float列表
+                    # 步骤4.4.1：确保向量是 float 列表
                     if hasattr(v, "tolist"):
-                        v = v.tolist()
-                    v_norm = [float(x) for x in v]
+                        v = v.tolist()  # numpy → list
+                    v_norm = [float(x) for x in v]  # 确保每个元素都是 float
+                    
+                    # 步骤4.4.2：检查向量维度是否正确
                     if len(v_norm) != dimension:
                         print(f"[WARNING] 向量维度异常: 期望{dimension}, 实际{len(v_norm)}")
-                        # 用零向量填充或截断
+                        
+                        # 维度不匹配时的兜底处理
                         if len(v_norm) < dimension:
+                            # 维度不足：用零填充
                             v_norm.extend([0.0] * (dimension - len(v_norm)))
                         else:
+                            # 维度过多：截断
                             v_norm = v_norm[:dimension]
-                    vecs.append(v_norm)
+                    
+                    vecs.append(v_norm)  # 添加到向量列表
+                    
                 except Exception as e:
+                    # 向量转换失败：使用零向量兜底（保证不崩溃）
                     print(f"[WARNING] 向量转换失败: {e}, 使用零向量")
                     vecs.append([0.0] * dimension)
                 
         except Exception as e:
+            # ========== 步骤4.5：批次失败时的重试机制 ==========
             print(f"[WARNING] Batch {i} encoding failed: {e}")
             print(f"[RAG] Retrying batch {i} with smaller chunks...")
             
-            # 尝试重试：将批次分解为更小的块
+            # 为什么要重试？
+            # - 云端 API 可能有频率限制
+            # - 大批次可能导致超时
+            # 策略：将批次分解为更小的块（8个一组）
             success = False
             for j in range(0, len(part), 8):  # 更小的批次
                 small_part = part[j:j+8]
@@ -730,29 +1164,44 @@ def index_chunks(
         
         print(f"[RAG] Embedding progress: {min(i+batch_size, len(processed_texts))}/{len(processed_texts)}")
     
-    # Prepare metadata with RAG tags
-    metas: List[Dict] = []
-    ids: List[str] = []
+    # ========== 步骤5：组装 metadata 并补充 RAG 专用标签 ==========
+    metas: List[Dict] = []  # metadata 列表
+    ids: List[str] = []     # chunk ID 列表
+    
     for ch in chunks:
+        # 步骤5.1：创建基础 metadata（包含 RAG 专用字段）
         meta = {
-            "memory_id": ch["id"],
-            "user_id": "rag_user",
-            "memory_type": "rag_chunk",
-            "content": ch["content"],  # Keep original markdown content
-            "data_source": "rag_pipeline",  # RAG identification tag
-            "rag_namespace": rag_namespace,
-            "is_rag_data": True,  # Clear RAG data marker
+            "memory_id": ch["id"],  # chunk 的唯一标识符
+            "user_id": "rag_user",  # 用户标识（RAG 数据统一使用 "rag_user"）
+            "memory_type": "rag_chunk",  # 内存类型标记（用于过滤）
+            "content": ch["content"],  # 保留原始 Markdown 内容（用于显示）
+            "data_source": "rag_pipeline",  # 数据来源标识（用于过滤）
+            "rag_namespace": rag_namespace,  # 命名空间（隔离不同知识库）
+            "is_rag_data": True,  # RAG 数据标记（用于过滤）
         }
-        # Merge chunk metadata
+        
+        # 步骤5.2：合并 chunk 自带的 metadata
+        # 包含：source_path, file_ext, doc_id, lang, heading_path 等
         meta.update(ch.get("metadata", {}))
+        
         metas.append(meta)
         ids.append(ch["id"])
     
+    # ========== 步骤6：写入向量库 ==========
     print(f"[RAG] Qdrant upsert start: n={len(vecs)}")
+    
+    # 调用 store.add_vectors() 批量写入
+    # 参数说明：
+    # - vectors: 向量列表 List[List[float]]
+    # - metadata: 元数据列表 List[Dict]
+    # - ids: ID 列表 List[str]
     success = store.add_vectors(vectors=vecs, metadata=metas, ids=ids)
+    
+    # 步骤6.1：检查写入结果
     if success:
         print(f"[RAG] Qdrant upsert done: {len(vecs)} vectors indexed")
     else:
+        # 写入失败：抛出异常（让上层知道出错了）
         print(f"[RAG] Qdrant upsert failed")
         raise RuntimeError("Failed to index vectors to Qdrant")
 
