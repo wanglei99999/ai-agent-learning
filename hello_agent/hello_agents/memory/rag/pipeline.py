@@ -1,3 +1,26 @@
+"""RAG Pipeline（RAG 引擎层：文档解析 / 切分 / 向量化 / 检索）
+
+你在学习 `hello-agent` 架构时，可以把这个模块理解为：
+- 上层 `RAGTool` 负责“对外工具接口 + 参数整理 + 输出格式”。
+- 本模块负责“真正的 RAG 引擎”：把文件入库到向量库、把 query 检索出相关 chunk。
+
+核心数据流（建议先记住这 3 条）：
+1) 入库（Indexing）：file_paths → load_and_chunk_texts → index_chunks → Qdrant
+2) 基础检索（Retrieval）：query → embed_query → search_vectors → Qdrant
+3) 高级检索（Advanced）：search_vectors_expanded（MQE/HyDE 查询扩展）→ 多路检索聚合
+
+对外入口：create_rag_pipeline() 返回一个 dict（可以当作轻量 Facade）：
+- add_documents(file_paths, chunk_size, chunk_overlap) -> int
+- search(query, top_k, score_threshold) -> List[Dict]
+- search_advanced(query, top_k, enable_mqe, enable_hyde, score_threshold) -> List[Dict]
+- get_stats() -> Dict[str, Any]
+- store: QdrantVectorStore
+
+关于 sqlite3/cache_db：
+- 本文件 import 了 sqlite3，并且 index_chunks() 预留了 cache_db 参数。
+- 但当前实现里没有看到 sqlite3.connect(...) 的实际使用，更像是历史遗留/预留扩展点。
+"""
+
 from typing import List, Dict, Optional, Any
 import os
 import hashlib
@@ -9,8 +32,14 @@ from ..storage.qdrant_store import QdrantVectorStore
 
 
 def _get_markitdown_instance():
-    """
-    Get a configured MarkItDown instance for document conversion.
+    """获取 MarkItDown 实例（用于多格式文档解析）
+
+    MarkItDown 是一个“多格式文件 → Markdown/文本”的统一转换工具。
+    在 RAG 入库阶段，我们希望优先用它把 PDF/Office/图片/音频/网页等转成文本，
+    这样后面的切分、embedding 才能统一处理。
+
+    Returns:
+        MarkItDown | None: 未安装 `markitdown` 时返回 None（调用方会降级到 `_fallback_text_reader`）。
     """
     try:
         from markitdown import MarkItDown
@@ -25,6 +54,16 @@ def _is_markitdown_supported_format(path: str) -> bool:
     Check if the file format is supported by MarkItDown.
     Supports: PDF, Office docs (docx, xlsx, pptx), images (jpg, png, gif, bmp, tiff), 
     audio (mp3, wav, m4a), HTML, text formats (txt, md, csv, json, xml), ZIP files, etc.
+
+    教学理解：
+    - 这里只做“文件后缀名”级别判断，不读取文件内容。
+    - 常用于决定：该文件是否可以交给 MarkItDown 解析；不行就走 fallback reader。
+
+    Args:
+        path: 文件路径。
+
+    Returns:
+        bool: True 表示后缀名在支持列表中。
     """
     ext = (os.path.splitext(path)[1] or '').lower()
     supported_formats = {
@@ -47,9 +86,23 @@ def _is_markitdown_supported_format(path: str) -> bool:
 
 
 def _convert_to_markdown(path: str) -> str:
-    """
-    Universal document reader using MarkItDown with enhanced PDF processing.
-    Converts any supported file format to markdown text.
+    """统一文档读取入口：文件 → 文本（markdown/纯文本）
+
+    教学理解：
+    - 后续的 chunking、embedding 都只处理字符串，因此任何输入文件都要先在这里被“转成文本”。
+    - 这个函数尽量保证“失败可降级”：MarkItDown 不可用或失败时，会改用 `_fallback_text_reader`。
+
+    处理策略：
+    1) 文件不存在：返回空字符串
+    2) PDF：走 `_enhanced_pdf_processing`（额外做清洗/重组，利于后续切分）
+    3) 其他格式：优先 `MarkItDown.convert(...)`
+    4) 异常：fallback reader
+
+    Args:
+        path: 文件路径。
+
+    Returns:
+        str: 提取到的文本内容；失败时返回空字符串。
     """
     if not os.path.exists(path):
         return ""
@@ -320,12 +373,52 @@ def _chunk_paragraphs(paragraphs: List[Dict], chunk_tokens: int, overlap_tokens:
             "heading_path": heading_path,
         })
     return chunks
-
-
+ 
+ 
 def load_and_chunk_texts(paths: List[str], chunk_size: int = 800, chunk_overlap: int = 100, namespace: Optional[str] = None, source_label: str = "rag") -> List[Dict]:
-    """
-    Universal document loader and chunker using MarkItDown.
-    Converts all supported formats to markdown, then chunks intelligently.
+    """加载文件并切分为 chunks（RAG 入库阶段的核心一步）
+
+    你可以把这个函数理解为：
+    - **输入是一堆文件**（`paths`）
+    - **输出是一堆可入库的文本片段**（chunks：每条都带 `content` 和 `metadata`）
+
+    这个函数做的事情（按顺序）：
+    1) 对每个文件调用 `_convert_to_markdown(path)`：把不同格式统一变成文本/Markdown。
+    2) `_split_paragraphs_with_headings(text)`：识别 markdown 标题层级，把段落与章节路径关联起来。
+    3) `_chunk_paragraphs(...)`：按“近似 token 长度”把段落合并成 chunk，并用 `chunk_overlap` 做重叠。
+    4) 为每个 chunk 生成：
+       - `id`: 稳定的 chunk id（基于 doc_id、位置、hash）
+       - `content`: chunk 文本
+       - `metadata`: 来源文件、语言、字符偏移、heading_path 等
+
+    Args:
+        paths: 文件路径列表。
+        chunk_size: chunk 目标大小（本实现使用近似 token 计数）。
+        chunk_overlap: chunk 重叠大小（同样按近似 token 计数）。
+        namespace: 写入到 `metadata["namespace"]` 的逻辑命名空间（用于隔离不同知识库）。
+        source_label: 写入到 `metadata["source"]` 的来源标识。
+
+    Returns:
+        List[Dict]: chunk 列表。每项形如：
+ 
+            - `{"id": str, "content": str, "metadata": Dict[str, Any]}`
+ 
+        初学者通常只需要先关注：
+        - `chunk["content"]`
+        - `chunk["metadata"]["source_path"]`
+        - `chunk["metadata"]["heading_path"]`
+
+    Example:
+        >>> chunks = load_and_chunk_texts([
+        ...     "./docs/intro.pdf",
+        ...     "./notes.md",
+        ... ], chunk_size=400, chunk_overlap=50, namespace="default")
+        >>> len(chunks)
+        42
+        >>> list(chunks[0].keys())
+        ['id', 'content', 'metadata']
+        >>> chunks[0]['metadata'].get('source_path')
+        './docs/intro.pdf'
     """
     print(f"[RAG] Universal loader start: files={len(paths)} chunk_size={chunk_size} overlap={chunk_overlap} ns={namespace or 'default'}")
     chunks: List[Dict] = []
@@ -484,9 +577,41 @@ def index_chunks(
     batch_size: int = 64,
     rag_namespace: str = "default"
 ) -> None:
-    """
-    Index markdown chunks with unified embedding and Qdrant storage.
-    Uses百炼 API with fallback to sentence-transformers.
+    """把 chunks 向量化并写入 Qdrant（入库阶段的“写入”部分）
+
+    教学理解：
+    - `load_and_chunk_texts()` 解决“文件怎么切成片段”。
+    - `index_chunks()` 解决“片段怎么变成向量，并写到向量库”。
+
+    Steps（按代码执行顺序）：
+    1) 获取 embedding 模型：`embedder = get_text_embedder()`。
+    2) 预处理文本：`_preprocess_markdown_for_embedding`，减少 markdown 符号噪声。
+    3) 分批 `embedder.encode(part)` 得到向量（包含异常处理与维度兜底）。
+    4) 为每条 chunk 组装写入的 `metadata`，并补充 RAG 专用标签，便于检索过滤：
+       - `memory_type: "rag_chunk"`
+       - `is_rag_data: True`
+       - `data_source: "rag_pipeline"`
+       - `rag_namespace: <namespace>`
+    5) 调用 `store.add_vectors(vectors=..., metadata=..., ids=...)` 写入。
+
+    Args:
+        store: QdrantVectorStore（或兼容接口）。None 时会创建默认 store。
+        chunks: `load_and_chunk_texts()` 的输出列表。
+        cache_db: 预留参数（当前实现未使用；本文件虽 import sqlite3，但未实际 connect）。
+        batch_size: embedding 批大小。
+        rag_namespace: 写入/检索用的命名空间标签。
+
+    Returns:
+        None
+
+    Raises:
+        RuntimeError: 当写入向量库失败时抛出。
+
+    Example:
+        >>> store = _create_default_vector_store()
+        >>> chunks = load_and_chunk_texts(["./docs/intro.pdf"], namespace="default")
+        >>> index_chunks(store=store, chunks=chunks, rag_namespace="default")
+        >>> # 写入成功时无返回值；失败会抛 RuntimeError
     """
     if not chunks:
         print("[RAG] No chunks to index")
@@ -498,7 +623,7 @@ def index_chunks(
     
     # Create default Qdrant store if not provided
     if store is None:
-        store = _create_default_vector_store(dimension)
+        store = _create_default_vector_store()
         print(f"[RAG] Created default Qdrant store with dimension {dimension}")
     
     # Preprocess markdown texts for better embeddings
@@ -633,9 +758,27 @@ def index_chunks(
 
 
 def embed_query(query: str) -> List[float]:
-    """
-    Embed query using unified embedding (百炼 with fallback).
-    """
+    """把用户 query 文本转换为向量（embedding）
+
+    教学理解：
+    - 向量检索的前提是：**文档 chunk 和 query 必须使用同一个 embedding 模型**。
+    - 本项目通过 `get_text_embedder()` 获取统一 embedder（可能是云端 embedding，也可能是本地模型）。
+
+    这个函数做了两类“工程化兜底”，避免检索阶段因为模型返回格式不同而崩溃：
+    - 返回值归一化：把 numpy/嵌套列表等情况转成 `List[float]`
+    - 维度兜底：如果维度不等于 `get_dimension(384)`，则用填充/截断对齐
+
+    Args:
+        query: 用户查询文本。
+
+    Returns:
+        List[float]: 长度为 `dimension` 的向量；异常时返回零向量（保证下游不崩）。
+
+     Example:
+         >>> vec = embed_query("什么是 RAG？")
+         >>> len(vec) == get_dimension(384)
+         True
+     """
     embedder = get_text_embedder()
     dimension = get_dimension(384)
     try:
@@ -676,8 +819,36 @@ def search_vectors(
     only_rag_data: bool = True, 
     score_threshold: Optional[float] = None
 ) -> List[Dict]:
-    """
-    Search RAG vectors using unified embedding and Qdrant.
+    """基础检索：query → embedding → Qdrant 相似搜索
+
+    教学理解：
+    - 这是 RAG 的“检索（R）”阶段：把 query 向量化，然后在向量库里找相近向量。
+    - 本函数只做“检索”，不做重排/摘要/拼接；上层可以基于结果继续处理。
+
+    过滤条件（where）：
+    - 始终要求 `memory_type == "rag_chunk"`
+    - `only_rag_data=True` 时，会额外要求 `is_rag_data=True` 与 `data_source="rag_pipeline"`
+    - 如果提供 `rag_namespace`，会再加上命名空间过滤
+
+    Args:
+        store: 向量库实例。None 时创建默认 Qdrant store。
+        query: 用户查询。
+        top_k: 返回 top_k 条结果。
+        rag_namespace: 命名空间过滤（隔离不同知识库）。
+        only_rag_data: 是否只检索本 pipeline 写入的 RAG 数据。
+        score_threshold: 相似度阈值（低于该阈值的结果可能被过滤，取决于 store 实现）。
+
+    Returns:
+        List[Dict]: 检索命中列表（结构由 `store.search_similar` 决定）。通常包含：
+        - `score`: 相似度
+        - `metadata`: 含 `content/source_path/heading_path/...`
+
+    Example:
+        >>> pipeline = create_rag_pipeline(rag_namespace="default")
+        >>> _ = pipeline["add_documents"](["./docs/intro.pdf"])
+        >>> hits = search_vectors(store=pipeline["store"], query="RAG", top_k=3, rag_namespace="default")
+        >>> hits[0].keys()
+        dict_keys(['id', 'score', 'metadata'])
     """
     if not query:
         return []
@@ -709,35 +880,6 @@ def search_vectors(
         return []
 
 
-def _prompt_mqe(query: str, n: int) -> List[str]:
-    try:
-        from ...core.llm import HelloAgentsLLM
-        llm = HelloAgentsLLM()
-        prompt = [
-            {"role": "system", "content": "你是检索查询扩展助手。生成语义等价或互补的多样化查询。使用中文，简短，避免标点。"},
-            {"role": "user", "content": f"原始查询：{query}\n请给出{n}个不同表述的查询，每行一个。"}
-        ]
-        text = llm.invoke(prompt)
-        lines = [ln.strip("- \t") for ln in (text or "").splitlines()]
-        outs = [ln for ln in lines if ln]
-        return outs[:n] or [query]
-    except Exception:
-        return [query]
-
-
-def _prompt_hyde(query: str) -> Optional[str]:
-    try:
-        from ...core.llm import HelloAgentsLLM
-        llm = HelloAgentsLLM()
-        prompt = [
-            {"role": "system", "content": "根据用户问题，先写一段可能的答案性段落，用于向量检索的查询文档（不要分析过程）。"},
-            {"role": "user", "content": f"问题：{query}\n请直接写一段中等长度、客观、包含关键术语的段落。"}
-        ]
-        return llm.invoke(prompt)
-    except Exception:
-        return None
-
-
 def search_vectors_expanded(
     store = None,
     query: str = "",
@@ -750,8 +892,50 @@ def search_vectors_expanded(
     enable_hyde: bool = False,
     candidate_pool_multiplier: int = 4,
 ) -> List[Dict]:
-    """
-    Search with query expansion using unified embedding and Qdrant.
+    """高级检索：查询扩展（MQE/HyDE）+ 多路检索结果聚合
+
+    教学理解（为什么要“扩展查询”）：
+    - 用户的 query 可能太短/歧义大，单次检索容易漏召回。
+    - 让 LLM 生成多个“不同说法”的查询，再分别检索，可以提升召回率。
+
+    扩展来源：
+    - MQE（Multi-Query Expansion）：`_prompt_mqe(query, n)` 生成 n 个改写查询。
+    - HyDE（Hypothetical Document Embeddings）：`_prompt_hyde(query)` 生成一段“假想答案段落”，
+      将其视作 query 文本来检索（有时能更贴近文档表述）。
+
+    聚合方式：
+    - 每个扩展 query 都会进行一次向量搜索
+    - 结果按 `memory_id` 去重：同一个 chunk 只保留最高分
+    - 最终按 score 排序，返回 top_k
+
+    Args:
+        store: 向量库实例。
+        query: 原始 query。
+        top_k: 最终返回条数。
+        rag_namespace: 命名空间过滤。
+        only_rag_data: 是否只检索本 pipeline 写入的数据。
+        score_threshold: 相似度阈值。
+        enable_mqe: 是否启用 MQE。
+        mqe_expansions: MQE 生成的扩展 query 数量。
+        enable_hyde: 是否启用 HyDE。
+        candidate_pool_multiplier: 候选池倍率；越大表示每路检索拉回更多候选用于聚合。
+
+    Returns:
+        List[Dict]: 聚合后的 top_k 命中结果。
+
+    Example:
+        >>> pipeline = create_rag_pipeline(rag_namespace="default")
+        >>> _ = pipeline["add_documents"](["./docs/intro.pdf"])
+        >>> hits = search_vectors_expanded(
+        ...     store=pipeline["store"],
+        ...     query="RAG 的索引流程",
+        ...     top_k=5,
+        ...     rag_namespace="default",
+        ...     enable_mqe=True,
+        ...     enable_hyde=True,
+        ... )
+        >>> len(hits)
+        5
     """
     if not query:
         return []
@@ -1122,8 +1306,6 @@ def tldr_summarize(text: str, bullets: int = 3) -> Optional[str]:
     except Exception:
         return None
 
-
-# ==================
 # High-level RAG Pipeline API
 # ==================
 
@@ -1133,11 +1315,36 @@ def create_rag_pipeline(
     collection_name: str = "hello_agents_rag_vectors",
     rag_namespace: str = "default"
 ) -> Dict[str, Any]:
-    """
-    Create a complete RAG pipeline with Qdrant and unified embedding.
-    
+    """创建一个可直接给上层调用的 RAG Pipeline（工厂函数）
+
+    教学理解：
+    - 这个函数把“向量库（Qdrant）”和“若干操作函数（入库/检索/统计）”打包成一个 dict。
+    - 上层（例如 `RAGTool`）拿到这个 dict，就可以通过 key 调用，而不需要了解内部细节。
+
+    返回的 pipeline（dict）是一个轻量 Facade，常用 key：
+    - `pipeline["store"]`: QdrantVectorStore
+    - `pipeline["namespace"]`: str
+    - `pipeline["add_documents"](file_paths, chunk_size, chunk_overlap) -> int`
+    - `pipeline["search"](query, top_k, score_threshold) -> List[Dict]`
+    - `pipeline["search_advanced"](query, top_k, enable_mqe, enable_hyde, score_threshold) -> List[Dict]`
+    - `pipeline["get_stats"]() -> Dict[str, Any]`
+
+    Args:
+        qdrant_url: Qdrant 服务地址（None 时由 store 自行处理/读取环境变量）。
+        qdrant_api_key: Qdrant API Key。
+        collection_name: Qdrant collection 名称。
+        rag_namespace: 逻辑命名空间（会写入 metadata 并用于检索过滤）。
+
     Returns:
-        Dict containing store, namespace, and helper functions
+        Dict[str, Any]: 如上所述的 pipeline dict。
+
+    Example:
+        >>> pipeline = create_rag_pipeline(rag_namespace="default")
+        >>> pipeline.keys()
+        dict_keys(['store', 'namespace', 'add_documents', 'search', 'search_advanced', 'get_stats'])
+        >>> n = pipeline["add_documents"](["./docs/intro.pdf"], chunk_size=800, chunk_overlap=100)
+        >>> hits = pipeline["search"]("RAG", top_k=3)
+        >>> stats = pipeline["get_stats"]()
     """
     dimension = get_dimension(384)
     
@@ -1150,7 +1357,16 @@ def create_rag_pipeline(
     )
     
     def add_documents(file_paths: List[str], chunk_size: int = 800, chunk_overlap: int = 100):
-        """Add documents to RAG pipeline"""
+        """入库：文件路径列表 → chunks → embedding → 写入向量库
+
+        Args:
+            file_paths: 待入库文件路径列表。
+            chunk_size: chunk 目标大小。
+            chunk_overlap: chunk 重叠大小。
+
+        Returns:
+            int: 本次成功写入的 chunk 数量（便于上层显示/统计）。
+        """
         chunks = load_and_chunk_texts(
             paths=file_paths,
             chunk_size=chunk_size,
@@ -1166,7 +1382,7 @@ def create_rag_pipeline(
         return len(chunks)
     
     def search(query: str, top_k: int = 8, score_threshold: Optional[float] = None):
-        """Search RAG knowledge base"""
+        """基础检索：直接对 query 做向量搜索"""
         return search_vectors(
             store=store,
             query=query,
@@ -1182,7 +1398,7 @@ def create_rag_pipeline(
         enable_hyde: bool = False,
         score_threshold: Optional[float] = None
     ):
-        """Advanced search with query expansion"""
+        """高级检索：可选 MQE/HyDE 查询扩展，提高召回率"""
         return search_vectors_expanded(
             store=store,
             query=query,
@@ -1194,7 +1410,7 @@ def create_rag_pipeline(
         )
     
     def get_stats():
-        """Get pipeline statistics"""
+        """获取向量库统计信息（collection 条数/维度/距离度量等，由 store 提供）"""
         return store.get_collection_stats()
     
     return {
