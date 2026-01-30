@@ -702,18 +702,6 @@ def load_and_chunk_texts(paths: List[str], chunk_size: int = 800, chunk_overlap:
         - `chunk["content"]`
         - `chunk["metadata"]["source_path"]`
         - `chunk["metadata"]["heading_path"]`
-
-    Example:
-        >>> chunks = load_and_chunk_texts([
-        ...     "./docs/intro.pdf",
-        ...     "./notes.md",
-        ... ], chunk_size=400, chunk_overlap=50, namespace="default")
-        >>> len(chunks)
-        42
-        >>> list(chunks[0].keys())
-        ['id', 'content', 'metadata']
-        >>> chunks[0]['metadata'].get('source_path')
-        './docs/intro.pdf'
     """
     # 打印开始日志（方便调试和监控）
     print(f"[RAG] Universal loader start: files={len(paths)} chunk_size={chunk_size} overlap={chunk_overlap} ns={namespace or 'default'}")
@@ -846,36 +834,80 @@ def build_graph_from_chunks(neo4j, chunks: List[Dict]) -> None:
     Returns:
         None（直接写入 Neo4j，异常时静默忽略）。
     """
+    # ========== 步骤1：初始化已创建文档集合 ==========
+    # 用于记录哪些文档节点已经创建过（避免重复创建）
     created_docs = set()
+    
+    # ========== 步骤2：遍历所有 chunks ==========
     for ch in chunks:
-        mem_id = ch["id"]
-        meta = ch.get("metadata", {})
-        source_path = meta.get("source_path")
-        doc_id = meta.get("doc_id")
+        # 步骤2.1：提取 chunk 的基本信息
+        mem_id = ch["id"]  # chunk 的唯一标识符（作为 Memory 节点的 ID）
+        meta = ch.get("metadata", {})  # chunk 的元数据
+        source_path = meta.get("source_path")  # 来源文件路径
+        doc_id = meta.get("doc_id")  # 文档 ID（用于关联 Document 节点）
+        
+        # ========== 步骤2.2：创建 Document 节点（每个文档只创建一次）==========
         if doc_id and doc_id not in created_docs:
+            # 标记该文档已创建
             created_docs.add(doc_id)
+            
             try:
+                # 创建 Document 节点
+                # entity_id: 文档的唯一标识符
+                # name: 文档名称（从路径中提取文件名）
+                # entity_type: 节点类型标记为 "Document"
+                # properties: 文档属性（来源路径、语言等）
                 neo4j.add_entity(
                     entity_id=doc_id,
-                    name=os.path.basename(source_path or doc_id),
+                    name=os.path.basename(source_path or doc_id),  # 提取文件名（如 "intro.pdf"）
                     entity_type="Document",
-                    properties={"source_path": source_path, "lang": meta.get("lang")}
+                    properties={
+                        "source_path": source_path,  # 完整路径
+                        "lang": meta.get("lang")  # 文档语言
+                    }
                 )
             except Exception:
+                # 创建失败时静默忽略（图数据库是可选功能，不影响主流程）
                 pass
+        
+        # ========== 步骤2.3：创建 Memory 节点（每个 chunk 对应一个 Memory）==========
         try:
-            neo4j.add_entity(entity_id=mem_id, name=mem_id, entity_type="Memory", properties={
-                "source_path": source_path,
-                "doc_id": doc_id,
-                "start": meta.get("start"),
-                "end": meta.get("end"),
-            })
+            # 创建 Memory 节点
+            # entity_id: chunk 的唯一标识符
+            # name: 节点名称（使用 chunk ID）
+            # entity_type: 节点类型标记为 "Memory"
+            # properties: chunk 属性（来源路径、文档 ID、位置信息等）
+            neo4j.add_entity(
+                entity_id=mem_id,
+                name=mem_id,  # 使用 chunk ID 作为名称
+                entity_type="Memory",
+                properties={
+                    "source_path": source_path,  # 来源文件路径
+                    "doc_id": doc_id,  # 所属文档 ID
+                    "start": meta.get("start"),  # chunk 起始位置
+                    "end": meta.get("end"),  # chunk 结束位置
+                }
+            )
         except Exception:
+            # 创建失败时静默忽略
             pass
+        
+        # ========== 步骤2.4：创建 Document → Memory 的关系 ==========
         if doc_id:
             try:
-                neo4j.add_relationship(from_id=doc_id, to_id=mem_id, rel_type="HAS_CHUNK", properties={})
+                # 创建 HAS_CHUNK 关系
+                # from_id: Document 节点 ID
+                # to_id: Memory 节点 ID
+                # rel_type: 关系类型（"HAS_CHUNK" 表示"文档包含 chunk"）
+                # properties: 关系属性（当前为空）
+                neo4j.add_relationship(
+                    from_id=doc_id,
+                    to_id=mem_id,
+                    rel_type="HAS_CHUNK",
+                    properties={}
+                )
             except Exception:
+                # 创建失败时静默忽略
                 pass
 
 
@@ -905,24 +937,67 @@ def _preprocess_markdown_for_embedding(text: str) -> str:
     """
     import re
     
-    # Remove markdown headers symbols but keep the text
+    # ========== 步骤1：移除 Markdown 标题符号（保留标题文本）==========
+    # 正则说明：
+    # - ^#{1,6}\s+：行首的 1-6 个 '#' 号 + 空白符
+    # - flags=re.MULTILINE：多行模式，^ 匹配每行开头
+    # 示例：
+    #   "# 第一章" → "第一章"
+    #   "## 1.1节" → "1.1节"
     text = re.sub(r'^#{1,6}\s+', '', text, flags=re.MULTILINE)
     
-    # Remove markdown links but keep the text
+    # ========== 步骤2：移除 Markdown 链接标记（保留链接文本）==========
+    # 正则说明：
+    # - \[([^\]]+)\]：捕获方括号内的文本（链接显示文本）
+    # - \([^)]+\)：匹配圆括号内的 URL（不捕获）
+    # - r'\1'：只保留第一个捕获组（链接文本）
+    # 示例：
+    #   "[百度](https://baidu.com)" → "百度"
+    #   "[文档](./doc.pdf)" → "文档"
     text = re.sub(r'\[([^\]]+)\]\([^)]+\)', r'\1', text)
     
-    # Remove markdown emphasis markers
-    text = re.sub(r'\*\*([^*]+)\*\*', r'\1', text)  # bold
-    text = re.sub(r'\*([^*]+)\*', r'\1', text)      # italic
-    text = re.sub(r'`([^`]+)`', r'\1', text)        # inline code
+    # ========== 步骤3：移除 Markdown 强调标记 ==========
+    # 步骤3.1：移除粗体标记
+    # 正则说明：
+    # - \*\*([^*]+)\*\*：匹配 **文本**，捕获中间的文本
+    # 示例："**重要**" → "重要"
+    text = re.sub(r'\*\*([^*]+)\*\*', r'\1', text)
     
-    # Remove markdown code blocks but keep content
+    # 步骤3.2：移除斜体标记
+    # 正则说明：
+    # - \*([^*]+)\*：匹配 *文本*，捕获中间的文本
+    # 示例："*强调*" → "强调"
+    text = re.sub(r'\*([^*]+)\*', r'\1', text)
+    
+    # 步骤3.3：移除行内代码标记
+    # 正则说明：
+    # - `([^`]+)`：匹配 `代码`，捕获中间的代码
+    # 示例："`print()`" → "print()"
+    text = re.sub(r'`([^`]+)`', r'\1', text)
+    
+    # ========== 步骤4：移除代码块标记（保留代码内容）==========
+    # 正则说明：
+    # - ```[^\n]*\n：匹配代码块开始标记（```python 等）+ 换行
+    # - ([\s\S]*?)：非贪婪匹配代码块内容（包括换行）
+    # - ```：匹配代码块结束标记
+    # 示例：
+    #   "```python\nprint('hello')\n```" → "print('hello')"
     text = re.sub(r'```[^\n]*\n([\s\S]*?)```', r'\1', text)
     
-    # Remove excessive whitespace
+    # ========== 步骤5：清理多余空白 ==========
+    # 步骤5.1：将连续换行（3个及以上）压缩为双换行
+    # 正则说明：
+    # - \n\s*\n：换行 + 任意空白 + 换行
+    # 示例："段落1\n\n\n段落2" → "段落1\n\n段落2"
     text = re.sub(r'\n\s*\n', '\n\n', text)
+    
+    # 步骤5.2：将连续空格/制表符压缩为单个空格
+    # 正则说明：
+    # - [ \t]+：一个或多个空格/制表符
+    # 示例："单词1    单词2" → "单词1 单词2"
     text = re.sub(r'[ \t]+', ' ', text)
     
+    # ========== 步骤6：去除首尾空白并返回 ==========
     return text.strip()
 
 
@@ -1228,36 +1303,61 @@ def embed_query(query: str) -> List[float]:
          >>> len(vec) == get_dimension(384)
          True
      """
+    # ========== 步骤1：获取 embedding 模型和向量维度 ==========
+    # 获取统一的 embedding 模型（与 index_chunks 使用相同的模型）
     embedder = get_text_embedder()
+    # 获取向量维度（必须与索引时的维度一致）
     dimension = get_dimension(384)
+    
     try:
+        # ========== 步骤2：调用 embedding 模型进行向量化 ==========
+        # 将查询文本转换为向量
+        # 示例：query = "什么是 RAG？" → vec = [0.1, 0.2, ..., 0.9]
         vec = embedder.encode(query)
         
-        # Normalize to List[float]
+        # ========== 步骤3：标准化向量格式 ==========
+        # 步骤3.1：将 numpy 数组转换为 Python 列表
+        # 为什么？不同 embedding 模型返回格式不同（numpy.ndarray 或 list）
         if hasattr(vec, "tolist"):
-            vec = vec.tolist()
+            vec = vec.tolist()  # numpy.ndarray → list
         
-        # 处理嵌套列表情况
+        # 步骤3.2：处理嵌套列表情况
+        # 某些模型可能返回 [[0.1, 0.2, ...]]（二维列表）
+        # 我们只需要第一个向量 [0.1, 0.2, ...]（一维列表）
         if isinstance(vec, list) and vec and isinstance(vec[0], (list, tuple)):
-            vec = vec[0]  # Extract first vector if nested
+            vec = vec[0]  # 提取第一个向量
         
-        # 转换为float列表
+        # 步骤3.3：确保每个元素都是 float 类型
+        # 为什么？某些模型可能返回 numpy.float32，需要转换为 Python float
         result = [float(x) for x in vec]
         
-        # 检查维度
+        # ========== 步骤4：检查并修正向量维度 ==========
+        # 为什么要检查？确保查询向量和索引向量的维度一致
+        # 维度不一致会导致检索失败
         if len(result) != dimension:
             print(f"[WARNING] Query向量维度异常: 期望{dimension}, 实际{len(result)}")
-            # 用零向量填充或截断
+            
+            # 步骤4.1：维度不足时用零填充
+            # 示例：result = [0.1, 0.2]（2维），dimension = 384
+            # → result = [0.1, 0.2, 0.0, 0.0, ..., 0.0]（384维）
             if len(result) < dimension:
                 result.extend([0.0] * (dimension - len(result)))
+            
+            # 步骤4.2：维度过多时截断
+            # 示例：result = [0.1, 0.2, ..., 0.9]（500维），dimension = 384
+            # → result = [0.1, 0.2, ..., 0.9]（前384维）
             else:
                 result = result[:dimension]
         
+        # ========== 步骤5：返回标准化的向量 ==========
         return result
+        
     except Exception as e:
+        # ========== 异常处理：返回零向量兜底 ==========
+        # 为什么要兜底？避免检索阶段因为 embedding 失败而崩溃
+        # 零向量不会匹配任何文档，但不会导致程序崩溃
         print(f"[WARNING] Query embedding failed: {e}")
-        # Return zero vector as fallback
-        return [0.0] * dimension
+        return [0.0] * dimension  # 返回零向量
 
 
 def search_vectors(
@@ -1299,34 +1399,161 @@ def search_vectors(
         >>> hits[0].keys()
         dict_keys(['id', 'score', 'metadata'])
     """
+    # ========== 步骤0：前置检查 ==========
+    # 如果查询为空，直接返回空列表
     if not query:
         return []
     
-    # Create default store if not provided
+    # ========== 步骤1：创建或使用向量库 ==========
+    # 如果没有提供 store，创建默认的 Qdrant 实例
     if store is None:
         store = _create_default_vector_store()
     
-    # Embed query with unified embedder
+    # ========== 步骤2：将查询转换为向量 ==========
+    # 调用 embed_query() 将查询文本转换为向量
+    # 示例：query = "什么是 RAG？" → qv = [0.1, 0.2, ..., 0.9]
     qv = embed_query(query)
     
-    # Build filter for RAG data
+    # ========== 步骤3：构建过滤条件 ==========
+    # 为什么要过滤？向量库中可能有多种类型的数据，我们只想检索 RAG chunks
+    
+    # 步骤3.1：基础过滤 - 只检索 RAG chunk 类型的数据
     where = {"memory_type": "rag_chunk"}
+    
+    # 步骤3.2：严格过滤 - 只检索本 pipeline 写入的 RAG 数据
+    # 为什么需要这个？避免检索到其他来源的数据
     if only_rag_data:
-        where["is_rag_data"] = True
-        where["data_source"] = "rag_pipeline"
+        where["is_rag_data"] = True  # RAG 数据标记
+        where["data_source"] = "rag_pipeline"  # 数据来源标识
+    
+    # 步骤3.3：命名空间过滤 - 隔离不同知识库
+    # 示例：项目 A 的数据不会被项目 B 检索到
     if rag_namespace:
         where["rag_namespace"] = rag_namespace
     
+    # ========== 步骤4：执行向量检索 ==========
     try:
+        # 调用 Qdrant 的相似度搜索
+        # 参数说明：
+        # - query_vector: 查询向量
+        # - limit: 返回 top_k 条结果
+        # - score_threshold: 相似度阈值（可选）
+        # - where: 过滤条件（只检索符合条件的数据）
         return store.search_similar(
-            query_vector=qv, 
-            limit=top_k, 
-            score_threshold=score_threshold, 
-            where=where
+            query_vector=qv,  # 查询向量
+            limit=top_k,  # 返回前 k 条结果
+            score_threshold=score_threshold,  # 相似度阈值
+            where=where  # 过滤条件
         )
     except Exception as e:
+        # ========== 异常处理：返回空列表 ==========
+        # 为什么要兜底？避免检索失败导致程序崩溃
         print(f"[WARNING] RAG search failed: {e}")
-        return []
+        return []  # 返回空列表，表示没有检索到结果
+
+
+def _prompt_mqe(query: str, n: int) -> List[str]:
+    """
+    MQE（Multi-Query Expansion）- 多查询扩展
+    调用 LLM 生成多个不同表述的查询，提升检索召回率
+    
+    Args:
+        query: 原始查询
+        n: 生成的扩展查询数量
+    
+    Returns:
+        List[str]: 扩展查询列表（失败时返回原始查询）
+    
+    Example:
+        >>> _prompt_mqe("RAG 的索引流程", 2)
+        ["RAG 如何建立索引", "RAG 系统的文档入库步骤"]
+    """
+    try:
+        # ========== 步骤1：导入并创建 LLM 实例 ==========
+        from ...core.llm import HelloAgentsLLM
+        llm = HelloAgentsLLM()
+        
+        # ========== 步骤2：构建 prompt ==========
+        # 系统提示：定义 LLM 的角色和任务
+        # 用户输入：原始查询 + 要求生成 n 个不同表述
+        prompt = [
+            {
+                "role": "system", 
+                "content": "你是检索查询扩展助手。生成语义等价或互补的多样化查询。使用中文，简短，避免标点。"
+            },
+            {
+                "role": "user", 
+                "content": f"原始查询：{query}\n请给出{n}个不同表述的查询，每行一个。"
+            }
+        ]
+        
+        # ========== 步骤3：调用 LLM 生成 ==========
+        text = llm.invoke(prompt)
+        
+        # ========== 步骤4：解析 LLM 返回的文本 ==========
+        # 按行分割，去除每行的标点符号和空白
+        # 示例：LLM 返回 "- RAG 如何建立索引\n- RAG 系统的文档入库步骤"
+        lines = [ln.strip("- \t") for ln in (text or "").splitlines()]
+        
+        # 过滤掉空行
+        outs = [ln for ln in lines if ln]
+        
+        # ========== 步骤5：返回结果 ==========
+        # 返回前 n 个查询，如果为空则返回原始查询
+        return outs[:n] or [query]
+        
+    except Exception:
+        # ========== 异常处理：返回原始查询 ==========
+        # 为什么要兜底？避免 LLM 调用失败导致检索无法进行
+        return [query]
+
+
+def _prompt_hyde(query: str) -> Optional[str]:
+    """
+    HyDE（Hypothetical Document Embeddings）- 假设文档嵌入
+    调用 LLM 生成一段"假想的答案"，用这段答案去检索
+    
+    为什么有效？
+    - 用户的查询通常是问题形式："RAG 的索引流程是什么？"
+    - 文档内容通常是陈述形式："RAG 的索引流程包括..."
+    - 假想答案的表述更接近文档的实际内容，能提升检索准确率
+    
+    Args:
+        query: 原始查询
+    
+    Returns:
+        Optional[str]: 假想答案段落（失败时返回 None）
+    
+    Example:
+        >>> _prompt_hyde("RAG 的索引流程")
+        "RAG 的索引流程包括文档加载、切分、向量化和写入向量库等步骤..."
+    """
+    try:
+        # ========== 步骤1：导入并创建 LLM 实例 ==========
+        from ...core.llm import HelloAgentsLLM
+        llm = HelloAgentsLLM()
+        
+        # ========== 步骤2：构建 prompt ==========
+        # 系统提示：要求 LLM 生成答案性段落，不要分析过程
+        # 用户输入：问题 + 要求写一段中等长度、客观、包含关键术语的段落
+        prompt = [
+            {
+                "role": "system", 
+                "content": "根据用户问题，先写一段可能的答案性段落，用于向量检索的查询文档（不要分析过程）。"
+            },
+            {
+                "role": "user", 
+                "content": f"问题：{query}\n请直接写一段中等长度、客观、包含关键术语的段落。"
+            }
+        ]
+        
+        # ========== 步骤3：调用 LLM 生成并返回 ==========
+        return llm.invoke(prompt)
+        
+    except Exception:
+        # ========== 异常处理：返回 None ==========
+        # 为什么返回 None？HyDE 是可选的增强功能，失败不影响基础检索
+        return None
 
 
 def search_vectors_expanded(
@@ -1386,35 +1613,54 @@ def search_vectors_expanded(
         >>> len(hits)
         5
     """
+    # ========== 步骤0：前置检查 ==========
     if not query:
         return []
     
-    # Create default store if not provided
+    # ========== 步骤1：创建或使用向量库 ==========
     if store is None:
         store = _create_default_vector_store()
     
-    # expansions
+    # ========== 步骤2：生成扩展查询列表 ==========
+    # 初始化：先加入原始查询
     expansions: List[str] = [query]
     
+    # 步骤2.1：MQE（Multi-Query Expansion）- 多查询扩展
+    # 让 LLM 生成多个不同说法的查询
+    # 示例："RAG 原理" → ["RAG 的工作机制", "RAG 系统如何运作"]
     if enable_mqe and mqe_expansions > 0:
         expansions.extend(_prompt_mqe(query, mqe_expansions))
+    
+    # 步骤2.2：HyDE（Hypothetical Document Embeddings）- 假设文档嵌入
+    # 让 LLM 生成一段"假想的答案"，用这段答案去检索
+    # 为什么有效？假想答案的表述可能更接近文档的实际内容
     if enable_hyde:
         hyde_text = _prompt_hyde(query)
         if hyde_text:
             expansions.append(hyde_text)
 
-    # unique and trim
+    # ========== 步骤3：去重和整理扩展查询 ==========
+    # 为什么要去重？MQE 和 HyDE 可能生成重复的查询
     uniq: List[str] = []
     for e in expansions:
-        if e and e not in uniq:
+        if e and e not in uniq:  # 非空且未出现过
             uniq.append(e)
-    expansions = uniq[: max(1, len(uniq))]
+    expansions = uniq[: max(1, len(uniq))]  # 确保至少有一个查询
 
-    # distribute pool per expansion
+    # ========== 步骤4：分配候选池 ==========
+    # 为什么需要候选池？每个扩展查询都会检索一批结果，最后聚合
+    # 候选池越大，召回率越高，但速度越慢
+    
+    # 步骤4.1：计算总候选池大小
+    # 示例：top_k=8, candidate_pool_multiplier=4 → pool=32
     pool = max(top_k * candidate_pool_multiplier, 20)
+    
+    # 步骤4.2：分配给每个扩展查询的检索数量
+    # 示例：pool=32, expansions=4 → per=8（每个查询检索 8 条）
     per = max(1, pool // max(1, len(expansions)))
 
-    # Build filter for RAG data
+    # ========== 步骤5：构建过滤条件 ==========
+    # 与 search_vectors() 相同的过滤逻辑
     where = {"memory_type": "rag_chunk"}
     if only_rag_data:
         where["is_rag_data"] = True
@@ -1422,19 +1668,44 @@ def search_vectors_expanded(
     if rag_namespace:
         where["rag_namespace"] = rag_namespace
 
-    # collect hits across expansions
+    # ========== 步骤6：多路检索并聚合结果 ==========
+    # 用字典按 memory_id 去重，保留最高分
     agg: Dict[str, Dict] = {}
+    
+    # 步骤6.1：遍历每个扩展查询
     for q in expansions:
+        # 步骤6.1.1：将扩展查询转换为向量
         qv = embed_query(q)
-        hits = store.search_similar(query_vector=qv, limit=per, score_threshold=score_threshold, where=where)
+        
+        # 步骤6.1.2：执行向量检索
+        # 每个查询检索 per 条结果
+        hits = store.search_similar(
+            query_vector=qv,
+            limit=per,
+            score_threshold=score_threshold,
+            where=where
+        )
+        
+        # 步骤6.1.3：聚合结果（按 memory_id 去重）
         for h in hits:
+            # 提取 chunk ID
             mid = h.get("metadata", {}).get("memory_id", h.get("id"))
+            # 提取相似度分数
             s = float(h.get("score", 0.0))
+            
+            # 去重逻辑：同一个 chunk 只保留最高分
+            # 为什么？不同扩展查询可能检索到相同的 chunk
             if mid not in agg or s > float(agg[mid].get("score", 0.0)):
-                agg[mid] = h
-    # return top by score
+                agg[mid] = h  # 保留或更新为更高分的结果
+    
+    # ========== 步骤7：排序并返回 top_k ==========
+    # 步骤7.1：将字典转换为列表
     merged = list(agg.values())
+    
+    # 步骤7.2：按相似度分数降序排序
     merged.sort(key=lambda x: float(x.get("score", 0.0)), reverse=True)
+    
+    # 步骤7.3：返回前 top_k 条结果
     return merged[:top_k]
 
 
@@ -1795,15 +2066,22 @@ def create_rag_pipeline(
         >>> hits = pipeline["search"]("RAG", top_k=3)
         >>> stats = pipeline["get_stats"]()
     """
+    # ========== 步骤1：获取向量维度 ==========
     dimension = get_dimension(384)
     
+    # ========== 步骤2：创建向量库实例 ==========
+    # 创建 Qdrant 向量库，所有内部函数都会共享这个 store 实例
+    # 这是闭包设计的核心：外部变量被内部函数捕获
     store = QdrantVectorStore(
-        url=qdrant_url,
-        api_key=qdrant_api_key,
-        collection_name=collection_name,
-        vector_size=dimension,
-        distance="cosine"
+        url=qdrant_url,              # Qdrant 服务地址
+        api_key=qdrant_api_key,      # API 密钥
+        collection_name=collection_name,  # collection 名称
+        vector_size=dimension,       # 向量维度（384）
+        distance="cosine"            # 相似度计算方法（余弦相似度）
     )
+    
+    # ========== 步骤3：定义内部函数（闭包） ==========
+    # 这些函数都是闭包，可以访问外部的 store 和 rag_namespace 变量
     
     def add_documents(file_paths: List[str], chunk_size: int = 800, chunk_overlap: int = 100):
         """入库：文件路径列表 → chunks → embedding → 写入向量库
@@ -1816,27 +2094,36 @@ def create_rag_pipeline(
         Returns:
             int: 本次成功写入的 chunk 数量（便于上层显示/统计）。
         """
+        # 步骤3.1：加载文件并切分为 chunks
+        # 调用之前学习的 load_and_chunk_texts() 函数
         chunks = load_and_chunk_texts(
             paths=file_paths,
             chunk_size=chunk_size,
             chunk_overlap=chunk_overlap,
-            namespace=rag_namespace,
+            namespace=rag_namespace,  # 使用外部闭包变量
             source_label="rag"
         )
+        
+        # 步骤3.2：向量化并写入向量库
+        # 调用之前学习的 index_chunks() 函数
         index_chunks(
-            store=store,
+            store=store,              # 使用外部闭包变量
             chunks=chunks,
-            rag_namespace=rag_namespace
+            rag_namespace=rag_namespace  # 使用外部闭包变量
         )
+        
+        # 步骤3.3：返回写入的 chunk 数量
         return len(chunks)
     
     def search(query: str, top_k: int = 8, score_threshold: Optional[float] = None):
         """基础检索：直接对 query 做向量搜索"""
+        # 调用之前学习的 search_vectors() 函数
+        # 使用闭包变量 store 和 rag_namespace
         return search_vectors(
-            store=store,
+            store=store,                 # 使用外部闭包变量
             query=query,
             top_k=top_k,
-            rag_namespace=rag_namespace,
+            rag_namespace=rag_namespace, # 使用外部闭包变量
             score_threshold=score_threshold
         )
     
@@ -1848,25 +2135,32 @@ def create_rag_pipeline(
         score_threshold: Optional[float] = None
     ):
         """高级检索：可选 MQE/HyDE 查询扩展，提高召回率"""
+        # 调用之前学习的 search_vectors_expanded() 函数
+        # 使用闭包变量 store 和 rag_namespace
         return search_vectors_expanded(
-            store=store,
+            store=store,                 # 使用外部闭包变量
             query=query,
             top_k=top_k,
-            rag_namespace=rag_namespace,
-            enable_mqe=enable_mqe,
-            enable_hyde=enable_hyde,
+            rag_namespace=rag_namespace, # 使用外部闭包变量
+            enable_mqe=enable_mqe,       # 是否启用 MQE
+            enable_hyde=enable_hyde,     # 是否启用 HyDE
             score_threshold=score_threshold
         )
     
     def get_stats():
         """获取向量库统计信息（collection 条数/维度/距离度量等，由 store 提供）"""
+        # 调用 Qdrant store 的统计方法
+        # 使用闭包变量 store
         return store.get_collection_stats()
     
+    # ========== 步骤4：返回 pipeline 字典 ==========
+    # 将向量库实例和所有操作函数打包成一个字典
+    # 这是 Facade 模式：为复杂的子系统提供简洁的统一接口
     return {
-        "store": store,
-        "namespace": rag_namespace,
-        "add_documents": add_documents,
-        "search": search,
-        "search_advanced": search_advanced,
-        "get_stats": get_stats
+        "store": store,                      # 向量库实例（可直接访问）
+        "namespace": rag_namespace,          # 命名空间（用于隔离不同项目）
+        "add_documents": add_documents,      # 入库函数（闭包）
+        "search": search,                    # 基础检索函数（闭包）
+        "search_advanced": search_advanced,  # 高级检索函数（闭包）
+        "get_stats": get_stats               # 统计函数（闭包）
     }
