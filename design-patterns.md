@@ -10,6 +10,7 @@
 2. [外观模式 (Facade Pattern)](#外观模式)
 3. [策略模式 (Strategy Pattern)](#策略模式)
 4. [装饰器模式 (Decorator Pattern)](#装饰器模式)
+5. [建造者模式 (Builder Pattern)](#建造者模式)
 
 ---
 
@@ -74,9 +75,47 @@ class MemoryTool(Tool):
 - 代码整体复杂度增加，需要新增一系列接口和类
 
 ### 实际应用
-**在 HelloAgents 项目中的应用**：
+
+**案例 1：MemoryTool 适配器**
 - `MemoryTool` 适配 `MemoryManager` 到 `Tool` 接口
 - 位置：`hello_agents/tools/builtin/memory_tool.py`
+
+**案例 2：MCP 协议层适配器**
+- `MCPClient` 适配 FastMCP Client 到项目统一接口
+- `MCPServer` 适配 FastMCP Server 到项目统一接口
+- 位置：`hello_agents/protocols/mcp/client.py`、`hello_agents/protocols/mcp/server.py`
+
+```
+上层代码（Agent/LLM）
+    ↓ 简单的字典和字符串
+MCPClient / MCPServer（适配器层）
+    ↓ 复杂的协议对象（ToolResult、ResourceResult 等）
+FastMCP（第三方库）
+    ↓ JSON-RPC
+MCP 协议通信
+```
+
+```python
+# MCPClient 作为适配器的体现：
+
+# FastMCP 原生用法（复杂）：
+from fastmcp.client.transports import PythonStdioTransport
+transport = PythonStdioTransport(script_path="server.py")
+client = Client(transport)
+async with client:
+    result = await client.call_tool("calculator", {"expression": "1+1"})
+    text = result.content[0].text  # 需要手动解析嵌套结构
+
+# MCPClient 适配后（简洁）：
+async with MCPClient("server.py") as client:  # 智能推断传输方式
+    result = await client.call_tool("calculator", {"expression": "1+1"})
+    # result 直接就是 "Result: 2"，已经帮你解析好了
+```
+
+**适配器的价值**：
+- 上层代码不依赖 FastMCP，将来换库只需改适配器层
+- 智能推断传输方式，简化使用
+- 统一结果格式，隐藏 FastMCP 复杂的返回值结构
 
 ---
 
@@ -551,25 +590,168 @@ class MemoryTool(Tool):
 
 ---
 
-##  四种模式的对比
+## 🔨 建造者模式 (Builder Pattern)
 
-| 维度 | 适配器模式 | 外观模式 | 策略模式 | 装饰器模式 |
-|------|-----------|---------|---------|-----------|
-| **类型** | 结构型 | 结构型 | 行为型 | 结构型 |
-| **目的** | 解决接口不兼容问题 | 简化复杂系统的使用 | 封装算法，使其可互换 | 动态添加功能 |
-| **关注点** | 接口转换 | 提供统一入口 | 算法选择 | 功能增强 |
-| **类比** | 充电器转换插头 | 医院导诊台 | 出行方式选择 | 咖啡加料 |
-| **结构** | 包装一个对象 | 包装多个子系统 | 封装多个算法 | 层层包装对象 |
-| **使用场景** | 两个系统接口不匹配 | 系统太复杂，需要简化 | 需要动态选择算法 | 需要动态添加功能 |
-| **核心特征** | 转换接口 | 简化调用 | 运行时切换 | 运行时增强 |
+### 定义
+建造者模式是一种创建型设计模式，它将一个复杂对象的构建过程与其表示分离，使得同样的构建过程可以创建不同的表示。
+
+### 核心思想
+将复杂对象的创建过程分解为多个简单步骤，通过链式调用逐步配置，最后一次性构建出完整对象。
+
+### 生活中的例子
+- **定制汉堡**：选面包 → 选肉饼 → 选配菜 → 选酱料 → 出餐，每步可选可不选
+- **装修房子**：选地板 → 选墙漆 → 选家具 → 选灯具 → 完工，按需定制
+- **组装电脑**：选 CPU → 选显卡 → 选内存 → 选硬盘 → 装机，灵活搭配
+
+### 代码示例
+
+```python
+# MCPServerBuilder - 建造者模式的实际应用
+
+class MCPServerBuilder:
+    """MCP 服务器建造者，支持链式调用"""
+    
+    def __init__(self, name: str):
+        self.name = name
+        self._tools = []        # 待注册的工具
+        self._resources = []    # 待注册的资源
+        self._prompts = []      # 待注册的提示词
+    
+    def with_tool(self, func, name=None, description=None):
+        """添加工具（链式调用，返回 self）"""
+        self._tools.append({"func": func, "name": name, "description": description})
+        return self  # 关键：返回 self，支持链式调用
+    
+    def with_resource(self, func, uri=None, name=None):
+        """添加资源（链式调用，返回 self）"""
+        self._resources.append({"func": func, "uri": uri, "name": name})
+        return self  # 关键：返回 self
+    
+    def with_prompt(self, func, name=None, description=None):
+        """添加提示词（链式调用，返回 self）"""
+        self._prompts.append({"func": func, "name": name, "description": description})
+        return self  # 关键：返回 self
+    
+    def build(self) -> MCPServer:
+        """终结方法：构建并返回 MCPServer 实例"""
+        server = MCPServer(self.name)
+        for tool in self._tools:
+            server.add_tool(**tool)
+        for resource in self._resources:
+            server.add_resource(**resource)
+        for prompt in self._prompts:
+            server.add_prompt(**prompt)
+        return server
+```
+
+### 链式调用的使用
+
+```python
+# 不用建造者模式（传统方式）：
+server = MCPServer("my-server")
+server.add_tool(calculator, name="calculator", description="计算器")
+server.add_tool(greet, name="greet", description="打招呼")
+server.add_resource(get_config, uri="config://app")
+server.run()
+
+# 使用建造者模式（链式调用）：
+server = (MCPServerBuilder("my-server")
+    .with_tool(calculator, name="calculator", description="计算器")
+    .with_tool(greet, name="greet", description="打招呼")
+    .with_resource(get_config, uri="config://app")
+    .build())
+server.run()
+```
+
+### 链式调用的原理
+
+```python
+# 为什么能链式调用？因为每个方法都 return self
+
+builder = MCPServerBuilder("my-server")  # 返回 builder 实例
+builder = builder.with_tool(calculator)   # 返回 self（还是同一个 builder）
+builder = builder.with_tool(greet)        # 返回 self（还是同一个 builder）
+server = builder.build()                  # 终结方法，返回 MCPServer
+
+# 所以可以连起来写：
+server = MCPServerBuilder("my-server").with_tool(calculator).with_tool(greet).build()
+```
+
+### 应用场景
+- 需要创建的对象有很多可选配置项
+- 对象的创建过程需要多个步骤
+- 想要创建不可变对象（构建完成后不再修改）
+- 构造函数参数过多，难以阅读
+
+### 优点
+- **可读性好**：链式调用清晰表达构建意图
+- **灵活配置**：每个步骤可选，按需组合
+- **构建与表示分离**：同样的构建过程可以创建不同配置的对象
+- **避免构造函数爆炸**：不需要写一个有 10 个参数的构造函数
+
+### 缺点
+- 需要额外创建 Builder 类，增加代码量
+- 如果对象结构简单，使用建造者模式反而过度设计
+
+### 实际应用
+
+**在 HelloAgents 项目中的应用**：
+- `MCPServerBuilder` 用于链式构建 MCP 服务器
+- 位置：`hello_agents/protocols/mcp/server.py`
+
+### 建造者模式的两种方法
+
+| 方法类型 | 特点 | 返回值 | 示例 |
+|---------|------|--------|------|
+| **配置方法** | 设置参数，可链式调用 | `return self` | `with_tool()`, `with_resource()` |
+| **终结方法** | 执行构建，结束链式调用 | 构建的对象 | `build()`, `run()` |
+
+### 建造者模式 vs 直接构造
+
+```python
+# 直接构造：参数多时难以阅读
+server = MCPServer(
+    name="my-server",
+    tools=[calculator, greet, translator],
+    resources=[get_config, get_status],
+    prompts=[code_review_prompt],
+    transport="http",
+    host="0.0.0.0",
+    port=8080
+)
+
+# 建造者模式：每步清晰，按需配置
+server = (MCPServerBuilder("my-server")
+    .with_tool(calculator)
+    .with_tool(greet)
+    .with_tool(translator)
+    .with_resource(get_config)
+    .with_resource(get_status)
+    .with_prompt(code_review_prompt)
+    .build())
+```
+
+---
+
+##  五种模式的对比
+
+| 维度 | 适配器模式 | 外观模式 | 策略模式 | 装饰器模式 | 建造者模式 |
+|------|-----------|---------|---------|-----------|----------|
+| **类型** | 结构型 | 结构型 | 行为型 | 结构型 | 创建型 |
+| **目的** | 解决接口不兼容问题 | 简化复杂系统的使用 | 封装算法，使其可互换 | 动态添加功能 | 分步构建复杂对象 |
+| **关注点** | 接口转换 | 提供统一入口 | 算法选择 | 功能增强 | 对象创建过程 |
+| **类比** | 充电器转换插头 | 医院导诊台 | 出行方式选择 | 咖啡加料 | 定制汉堡 |
+| **结构** | 包装一个对象 | 包装多个子系统 | 封装多个算法 | 层层包装对象 | 链式配置 + 终结构建 |
+| **使用场景** | 两个系统接口不匹配 | 系统太复杂，需要简化 | 需要动态选择算法 | 需要动态添加功能 | 对象配置项多且可选 |
+| **核心特征** | 转换接口 | 简化调用 | 运行时切换 | 运行时增强 | 链式调用 + return self |
 
 ---
 
 ## 📝 学习心得
 
-### 四种模式在记忆系统中的协作
+### 五种模式在项目中的协作
 
-在 HelloAgents 的记忆系统中，这四种模式完美配合，形成了清晰的层次结构：
+在 HelloAgents 项目中，这五种模式各司其职，形成了清晰的层次结构：
 
 #### 1. **适配器模式（MemoryTool）**
 - `MemoryTool` 继承 `Tool` 基类（目标接口）
@@ -590,6 +772,11 @@ class MemoryTool(Tool):
 - 为 MemoryTool 的方法添加元数据
 - 支持自动工具展开功能
 - 无需修改原方法即可增强功能
+
+#### 5. **建造者模式（MCPServerBuilder）**
+- 链式调用逐步配置 MCP 服务器
+- 将复杂的服务器创建过程分解为简单步骤
+- 位置：`hello_agents/protocols/mcp/server.py`
 
 ### 完整的调用链路
 
@@ -662,8 +849,9 @@ SemanticMemory.retrieve()  → 知识图谱查询
 - [ ] 观察者模式 (Observer Pattern)
 - [x] ~~策略模式 (Strategy Pattern)~~ ✅
 - [x] ~~装饰器模式 (Decorator Pattern)~~ ✅
+- [x] ~~建造者模式 (Builder Pattern)~~ ✅
 - [ ] 代理模式 (Proxy Pattern)
 
 ---
 
-**最后更新时间**：2026-01-27
+**最后更新时间**：2026-02-09
