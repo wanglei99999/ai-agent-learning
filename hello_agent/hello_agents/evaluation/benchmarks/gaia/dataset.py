@@ -72,7 +72,7 @@ class GAIADataset:
         if self.level is not None:
             self.data = [item for item in self.data if item.get("level") == self.level]
 
-        print(f"✅ GAIA数据集加载完成")
+        print(f"   GAIA数据集加载完成")
         print(f"   数据源: {self.dataset_name}")
         print(f"   分割: {self.split}")
         print(f"   级别: {self.level or '全部'}")
@@ -108,7 +108,7 @@ class GAIADataset:
 
                 print(f"   加载文件: {json_file.name} ({len(file_data)} 样本)")
             except Exception as e:
-                print(f"   ⚠️ 加载文件失败: {json_file.name} - {e}")
+                print(f"   加载文件失败: {json_file.name} - {e}")
 
         return data
 
