@@ -135,7 +135,7 @@ class BFCLDataset:
                 print(f"   [警告] 未知类别: {self.category}")
                 print(f"   支持的类别: {list(self.CATEGORY_MAPPING.keys())}")
                 return []
-
+            
             self.data = self._load_category(filename)
         else:
             # 未指定类别时，默认加载 simple_python 作为示例
