@@ -1,7 +1,36 @@
-"""
-Win Rate Evaluator
+"""Win Rate Evaluator
 
-通过成对对比计算胜率
+模块作用
+通过成对对比计算生成题目相对于真题的胜率。
+
+什么是 Win Rate 评估？
+- 将生成题目与 AIME 真题一对一比较
+- 由 LLM 判断哪个题目质量更高
+- 计算生成题目的胜率、败率、平局率
+- 反映生成题目的相对质量
+
+为什么用 Win Rate？
+1. 相对评估
+   - LLM Judge 评估绝对质量（单独评分）
+   - Win Rate 评估相对质量（与真题对比）
+   - 两者结合更全面
+
+2. 更直观
+   - 胜率 > 50%：生成题目比真题好
+   - 胜率 < 50%：真题比生成题目好
+   - 胜率 = 50%：质量相当
+
+3. 避免绝对评分偏差
+   - LLM 可能对所有题目都打高分/低分
+   - 相对比较更公平
+
+评估流程：
+  生成题目 + 真题 → 成对比较 → LLM 判断胜负 → 统计胜率
+
+关键特性：
+- 位置随机化：避免 A/B 位置偏向
+- 随机采样：支持指定对比次数
+- 支持平局：质量相当时可以判平
 """
 
 import json
@@ -12,21 +41,72 @@ from hello_agents.core.llm import HelloAgentsLLM
 
 
 class WinRateEvaluator:
-    """Win Rate评估器"""
+    """Win Rate 评估器
+    
+    【学习笔记】核心功能
+    通过成对对比评估生成题目相对于真题的质量。
+    
+    评估方式：
+    - 随机选择生成题目和真题进行配对
+    - 随机化题目顺序（避免位置偏向）
+    - LLM 判断哪个题目更好
+    - 统计胜率、败率、平局率
+    
+    输出指标：
+    - win_rate: 生成题目胜出的比例
+    - loss_rate: 真题胜出的比例
+    - tie_rate: 平局的比例
+    - wins/losses/ties: 具体数量
+    
+    与 LLM Judge 的对比：
+    - LLM Judge: 绝对评估（单独打分）
+    - Win Rate: 相对评估（与真题对比）
+    - 建议两者结合使用
+    
+    使用场景：
+    - 对比生成题目与真题的差距
+    - 评估生成模型是否达到真题水平
+    - 对比不同生成模型的表现
+    """
     
     def __init__(
         self,
         llm: Optional[HelloAgentsLLM] = None,
         judge_model: str = "gpt-4o"
     ):
-        """
-        初始化Win Rate评估器
+        """初始化 Win Rate 评估器
+        
+        【学习笔记】初始化说明
+        设置评委 LLM 模型，用于判断题目质量。
+        
+        评委模型选择：
+        - 默认: gpt-4o（推荐）
+        - 要求: 需要强大的数学理解和判断能力
+        - 公正性: 能公正地比较两个题目
+        
+        为什么用 GPT-4o？
+        - 数学能力强：能理解 AIME 级别的题目
+        - 判断公正：不偏向任何一方
+        - 输出稳定：能按要求输出 JSON 格式
+        
+        示例：
+            # 使用默认模型
+            evaluator = WinRateEvaluator()
+            
+            # 指定模型
+            evaluator = WinRateEvaluator(judge_model="gpt-4")
+            
+            # 使用自定义 LLM 实例
+            my_llm = HelloAgentsLLM(model="claude-3-opus")
+            evaluator = WinRateEvaluator(llm=my_llm)
         
         Args:
-            llm: LLM实例，如果为None则创建新实例
+            llm: LLM 实例，如果为 None 则创建新实例
             judge_model: 评委模型名称
         """
+        # 创建或使用提供的 LLM 实例
         self.llm = llm or HelloAgentsLLM(model=judge_model)
+        # 保存模型名称
         self.judge_model = judge_model
         
     def compare_pair(
@@ -88,7 +168,7 @@ class WinRateEvaluator:
         Returns:
             胜率评估结果
         """
-        print(f"\n🏆 开始Win Rate评估")
+        print(f"\n 开始 Win Rate 评估")
         print(f"   评委模型: {self.judge_model}")
         print(f"   生成数据: {len(generated_problems)} 个")
         print(f"   参考数据: {len(reference_problems)} 个")
@@ -190,7 +270,7 @@ class WinRateEvaluator:
             "total_comparisons": num_comparisons
         }
         
-        print(f"\n📊 Win Rate评估结果:")
+        print(f"\n Win Rate 评估结果:")
         print(f"   胜率: {win_rate:.2%}")
         print(f"   败率: {loss_rate:.2%}")
         print(f"   平局率: {tie_rate:.2%}")
@@ -318,5 +398,5 @@ Please output your judgment in the following JSON format:
         """导出评估结果"""
         with open(output_path, 'w', encoding='utf-8') as f:
             json.dump(results, f, ensure_ascii=False, indent=2)
-        print(f"\n✅ Win Rate结果已保存: {output_path}")
+        print(f"\n Win Rate 结果已保存: {output_path}")
 

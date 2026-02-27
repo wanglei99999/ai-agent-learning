@@ -209,7 +209,7 @@ class BFCLIntegration:
         Returns:
             True 如果安装成功，False 否则
         """
-        print("📦 正在安装 BFCL 评估工具...")
+        print(" 正在安装 BFCL 评估工具...")
         print("   运行: pip install bfcl-eval")
         
         try:
@@ -222,20 +222,20 @@ class BFCLIntegration:
             )
             
             if result.returncode == 0:
-                print("✅ BFCL 评估工具安装成功")
+                print(" BFCL 评估工具安装成功")
                 return True
             else:
                 # 安装失败，打印错误信息
-                print(f"❌ 安装失败: {result.stderr}")
+                print(f" 安装失败: {result.stderr}")
                 return False
                 
         except subprocess.TimeoutExpired:
             # 安装超时 (>五分钟)
-            print("❌ 安装超时")
+            print(" 安装超时")
             return False
         except Exception as e:
             # 其他异常
-            print(f"❌ 安装出错: {e}")
+            print(f" 安装出错: {e}")
             return False
     
     def prepare_result_file(
@@ -293,11 +293,11 @@ class BFCLIntegration:
         if source_file.exists():
             import shutil
             shutil.copy2(source_file, target_file)  # copy2 保留元数据
-            print(f"✅ 结果文件已准备")
+            print(f" 结果文件已准备")
             print(f"   源文件: {source_file}")
             print(f"   目标文件: {target_file}")
         else:
-            print(f"⚠️ 源文件不存在: {source_file}")
+            print(f" 源文件不存在: {source_file}")
         
         return target_file
     
@@ -366,7 +366,7 @@ class BFCLIntegration:
         env = os.environ.copy()  # 复制当前环境变量
         env["BFCL_PROJECT_ROOT"] = str(self.project_root)  # 添加 BFCL 项目根目录
         
-        print(f"\n🔧 运行 BFCL 官方评估...")
+        print(f"\n 运行 BFCL 官方评估...")
         print(f"   模型: {model_name}")
         print(f"   类别: {category}")
         print(f"   项目根目录: {self.project_root}")
@@ -392,22 +392,22 @@ class BFCLIntegration:
             
             if result.returncode == 0:
                 # 评估成功
-                print("✅ BFCL 评估完成")
+                print(" BFCL 评估完成")
                 print(result.stdout)  # 打印官方工具的输出
                 return True
             else:
                 # 评估失败
-                print(f"❌ 评估失败")
+                print(f" 评估失败")
                 print(f"   错误信息: {result.stderr}")
                 return False
                 
         except subprocess.TimeoutExpired:
             # 评估超时 (>10分钟)
-            print("❌ 评估超时")
+            print(" 评估超时")
             return False
         except Exception as e:
             # 其他异常
-            print(f"❌ 评估出错: {e}")
+            print(f" 评估出错: {e}")
             return False
     
     def parse_results(
@@ -464,7 +464,7 @@ class BFCLIntegration:
         
         # 检查文件是否存在
         if not score_file.exists():
-            print(f"⚠️ 评估结果文件不存在: {score_file}")
+            print(f" 评估结果文件不存在: {score_file}")
             print(f"   请先运行 run_evaluation() 生成评分")
             return None
         
@@ -473,7 +473,7 @@ class BFCLIntegration:
             with open(score_file, 'r', encoding='utf-8') as f:
                 results = json.load(f)
             
-            print(f"\n📊 BFCL 评估结果")
+            print(f"\n BFCL 评估结果")
             print(f"   模型: {model_name}")
             print(f"   类别: {category}")
             
@@ -486,7 +486,7 @@ class BFCLIntegration:
             return results
             
         except Exception as e:
-            print(f"❌ 解析结果失败: {e}")
+            print(f" 解析结果失败: {e}")
             return None
     
     def get_summary_csv(self) -> Optional[Path]:
@@ -537,10 +537,10 @@ class BFCLIntegration:
         csv_file = self.score_dir / "data_overall.csv"
         
         if csv_file.exists():
-            print(f"\n📄 汇总 CSV 文件: {csv_file}")
+            print(f"\n 汇总 CSV 文件: {csv_file}")
             return csv_file
         else:
-            print(f"⚠️ 汇总 CSV 文件不存在: {csv_file}")
+            print(f"  汇总 CSV 文件不存在: {csv_file}")
             print(f"   请先运行 run_evaluation() 生成评分")
             return None
     
