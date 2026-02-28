@@ -1,15 +1,48 @@
-"""多智能体旅行规划系统"""
+"""
+多智能体旅行规划系统模块
+
+本模块是整个项目的核心，实现了基于多 Agent 协作的旅行规划功能
+这是本项目最重要的文件，连接 Controller 和 Service，实现 AI 驱动的旅行规划
+
+架构位置：
+Controller (routes/trip.py)
+    ↓
+Agent (本文件) ← AI 决策和服务编排
+    ↓
+Service (services/) ← 外部 API 调用
+
+核心概念：
+- 多智能体协作：4 个专业 Agent 分工合作
+- Agent 编排：主 Agent 协调各个子 Agent
+- MCP 工具调用：Agent 通过 MCP 调用高德地图 API
+
+Java 对比：
+- MultiAgentTripPlanner → 复杂的 Service 层业务逻辑
+- Agent 协作 → 微服务之间的调用编排
+- 无直接对应 → Java 项目通常没有 AI Agent 层
+"""
 
 import json
 from typing import Dict, Any, List
-from hello_agents import SimpleAgent
-from hello_agents.tools import MCPTool
+# HelloAgents 框架的核心类
+from hello_agents import SimpleAgent      # 简单 Agent 实现
+from hello_agents.tools import MCPTool    # MCP 工具封装
+# 导入服务层
 from ..services.llm_service import get_llm
+# 导入数据模型
 from ..models.schemas import TripRequest, TripPlan, DayPlan, Attraction, Meal, WeatherInfo, Location, Hotel
+# 导入配置
 from ..config import get_settings
 
-# ============ Agent提示词 ============
+# =============================================================================
+# Agent 提示词定义
+# 提示词 (Prompt) 是 Agent 的行为指南，类似 Java 中的接口文档或规范
+# =============================================================================
 
+# =============================================================================
+# Agent 1: 景点搜索专家
+# 职责：调用高德地图 API 搜索景点
+# =============================================================================
 ATTRACTION_AGENT_PROMPT = """你是景点搜索专家。你的任务是根据城市和用户偏好搜索合适的景点。
 
 **重要提示:**
@@ -32,6 +65,10 @@ ATTRACTION_AGENT_PROMPT = """你是景点搜索专家。你的任务是根据城
 3. 参数用逗号分隔
 """
 
+# =============================================================================
+# Agent 2: 天气查询专家
+# 职责：调用高德地图 API 查询天气
+# =============================================================================
 WEATHER_AGENT_PROMPT = """你是天气查询专家。你的任务是查询指定城市的天气信息。
 
 **重要提示:**
@@ -53,6 +90,10 @@ WEATHER_AGENT_PROMPT = """你是天气查询专家。你的任务是查询指定
 2. 格式必须完全正确,包括方括号和冒号
 """
 
+# =============================================================================
+# Agent 3: 酒店推荐专家
+# 职责：调用高德地图 API 搜索酒店
+# =============================================================================
 HOTEL_AGENT_PROMPT = """你是酒店推荐专家。你的任务是根据城市和景点位置推荐合适的酒店。
 
 **重要提示:**
@@ -72,6 +113,11 @@ HOTEL_AGENT_PROMPT = """你是酒店推荐专家。你的任务是根据城市�
 3. 关键词使用"酒店"或"宾馆"
 """
 
+# =============================================================================
+# Agent 4: 行程规划专家
+# 职责：整合其他 Agent 的结果，生成最终旅行计划
+# 这个 Agent 不调用工具，只负责数据整合和 JSON 生成
+# =============================================================================
 PLANNER_AGENT_PROMPT = """你是行程规划专家。你的任务是根据景点信息和天气信息,生成详细的旅行计划。
 
 请严格按照以下JSON格式返回旅行计划:
@@ -152,55 +198,87 @@ PLANNER_AGENT_PROMPT = """你是行程规划专家。你的任务是根据景点
 """
 
 
+# =============================================================================
+# 多智能体旅行规划系统类
+# 这是整个项目的核心类，管理 4 个专业 Agent 的协作
+# =============================================================================
 class MultiAgentTripPlanner:
-    """多智能体旅行规划系统"""
+    """
+    多智能体旅行规划系统
+    
+    管理 4 个专业 Agent 协作完成旅行规划：
+    1. 景点搜索 Agent - 搜索景点
+    2. 天气查询 Agent - 查询天气
+    3. 酒店推荐 Agent - 搜索酒店
+    4. 行程规划 Agent - 整合信息生成计划
+    
+    类似 Java 的服务编排层，但使用 AI Agent 实现
+    """
 
     def __init__(self):
-        """初始化多智能体系统"""
-        print("🔄 开始初始化多智能体旅行规划系统...")
+        """
+        初始化多智能体系统
+        
+        创建 4 个 Agent 并为它们配置工具
+        类似 Java: @PostConstruct 初始化方法
+        """
+        print("开始初始化多智能体旅行规划系统...")
 
         try:
+            # 获取配置和 LLM 实例
             settings = get_settings()
             self.llm = get_llm()
 
-            # 创建共享的MCP工具(只创建一次)
+            # ===================================================================
+            # 创建共享的 MCP 工具（只创建一次，多个 Agent 共享）
+            # MCP 工具封装了高德地图 API 的调用
+            # ===================================================================
             print("  - 创建共享MCP工具...")
             self.amap_tool = MCPTool(
                 name="amap",
                 description="高德地图服务",
-                server_command=["uvx", "amap-mcp-server"],
+                server_command=["uvx", "amap-mcp-server"],  # MCP Server 启动命令
                 env={"AMAP_MAPS_API_KEY": settings.amap_api_key},
-                auto_expand=True
+                auto_expand=True  # 自动展开为多个独立工具
             )
 
-            # 创建景点搜索Agent
+            # ===================================================================
+            # 创建 Agent 1: 景点搜索专家
+            # ===================================================================
             print("  - 创建景点搜索Agent...")
             self.attraction_agent = SimpleAgent(
                 name="景点搜索专家",
-                llm=self.llm,
-                system_prompt=ATTRACTION_AGENT_PROMPT
+                llm=self.llm,                          # 使用的 LLM
+                system_prompt=ATTRACTION_AGENT_PROMPT  # Agent 的行为提示词
             )
-            self.attraction_agent.add_tool(self.amap_tool)
+            self.attraction_agent.add_tool(self.amap_tool)  # 添加高德地图工具
 
-            # 创建天气查询Agent
+            # ===================================================================
+            # 创建 Agent 2: 天气查询专家
+            # ===================================================================
             print("  - 创建天气查询Agent...")
             self.weather_agent = SimpleAgent(
                 name="天气查询专家",
                 llm=self.llm,
                 system_prompt=WEATHER_AGENT_PROMPT
             )
-            self.weather_agent.add_tool(self.amap_tool)
+            self.weather_agent.add_tool(self.amap_tool)  # 添加高德地图工具
 
-            # 创建酒店推荐Agent
+            # ===================================================================
+            # 创建 Agent 3: 酒店推荐专家
+            # ===================================================================
             print("  - 创建酒店推荐Agent...")
             self.hotel_agent = SimpleAgent(
                 name="酒店推荐专家",
                 llm=self.llm,
                 system_prompt=HOTEL_AGENT_PROMPT
             )
-            self.hotel_agent.add_tool(self.amap_tool)
+            self.hotel_agent.add_tool(self.amap_tool)  # 添加高德地图工具
 
-            # 创建行程规划Agent(不需要工具)
+            # ===================================================================
+            # 创建 Agent 4: 行程规划专家（不需要工具）
+            # 这个 Agent 只负责整合其他 Agent 的结果，不直接调用外部 API
+            # ===================================================================
             print("  - 创建行程规划Agent...")
             self.planner_agent = SimpleAgent(
                 name="行程规划专家",
@@ -208,77 +286,117 @@ class MultiAgentTripPlanner:
                 system_prompt=PLANNER_AGENT_PROMPT
             )
 
-            print(f"✅ 多智能体系统初始化成功")
+            # 打印初始化成功信息
+            print(f"多智能体系统初始化成功")
             print(f"   景点搜索Agent: {len(self.attraction_agent.list_tools())} 个工具")
             print(f"   天气查询Agent: {len(self.weather_agent.list_tools())} 个工具")
             print(f"   酒店推荐Agent: {len(self.hotel_agent.list_tools())} 个工具")
 
         except Exception as e:
-            print(f"❌ 多智能体系统初始化失败: {str(e)}")
+            # 初始化失败时打印详细错误信息
+            print(f"多智能体系统初始化失败: {str(e)}")
             import traceback
             traceback.print_exc()
             raise
     
+    # =========================================================================
+    # 核心方法：生成旅行计划
+    # 这是整个 Agent 系统的入口方法，协调 4 个 Agent 完成任务
+    # =========================================================================
     def plan_trip(self, request: TripRequest) -> TripPlan:
         """
         使用多智能体协作生成旅行计划
+        
+        执行流程：
+        1. 景点搜索 Agent 搜索景点
+        2. 天气查询 Agent 查询天气
+        3. 酒店推荐 Agent 搜索酒店
+        4. 行程规划 Agent 整合信息生成最终计划
+        
+        类似 Java 的服务编排方法
 
         Args:
-            request: 旅行请求
+            request: 旅行请求（包含城市、日期、偏好等）
 
         Returns:
-            旅行计划
+            TripPlan: 完整的旅行计划
         """
         try:
+            # 打印任务信息
             print(f"\n{'='*60}")
-            print(f"🚀 开始多智能体协作规划旅行...")
+            print(f"开始多智能体协作规划旅行...")
             print(f"目的地: {request.city}")
             print(f"日期: {request.start_date} 至 {request.end_date}")
             print(f"天数: {request.travel_days}天")
             print(f"偏好: {', '.join(request.preferences) if request.preferences else '无'}")
             print(f"{'='*60}\n")
 
-            # 步骤1: 景点搜索Agent搜索景点
-            print("📍 步骤1: 搜索景点...")
+            # ===================================================================
+            # 步骤 1: 调用景点搜索 Agent
+            # ===================================================================
+            print("步骤1: 搜索景点...")
             attraction_query = self._build_attraction_query(request)
             attraction_response = self.attraction_agent.run(attraction_query)
             print(f"景点搜索结果: {attraction_response[:200]}...\n")
 
-            # 步骤2: 天气查询Agent查询天气
-            print("🌤️  步骤2: 查询天气...")
+            # ===================================================================
+            # 步骤 2: 调用天气查询 Agent
+            # ===================================================================
+            print("步骤2: 查询天气...")
             weather_query = f"请查询{request.city}的天气信息"
             weather_response = self.weather_agent.run(weather_query)
             print(f"天气查询结果: {weather_response[:200]}...\n")
 
-            # 步骤3: 酒店推荐Agent搜索酒店
-            print("🏨 步骤3: 搜索酒店...")
+            # ===================================================================
+            # 步骤 3: 调用酒店推荐 Agent
+            # ===================================================================
+            print("步骤3: 搜索酒店...")
             hotel_query = f"请搜索{request.city}的{request.accommodation}酒店"
             hotel_response = self.hotel_agent.run(hotel_query)
             print(f"酒店搜索结果: {hotel_response[:200]}...\n")
 
-            # 步骤4: 行程规划Agent整合信息生成计划
-            print("📋 步骤4: 生成行程计划...")
+            # ===================================================================
+            # 步骤 4: 调用行程规划 Agent 整合所有信息
+            # ===================================================================
+            print("步骤4: 生成行程计划...")
             planner_query = self._build_planner_query(request, attraction_response, weather_response, hotel_response)
             planner_response = self.planner_agent.run(planner_query)
             print(f"行程规划结果: {planner_response[:300]}...\n")
 
-            # 解析最终计划
+            # ===================================================================
+            # 解析最终计划（从 JSON 字符串转换为 TripPlan 对象）
+            # ===================================================================
             trip_plan = self._parse_response(planner_response, request)
 
             print(f"{'='*60}")
-            print(f"✅ 旅行计划生成完成!")
+            print(f"旅行计划生成完成!")
             print(f"{'='*60}\n")
 
             return trip_plan
 
         except Exception as e:
-            print(f"❌ 生成旅行计划失败: {str(e)}")
+            # 异常处理：如果生成失败，返回备用计划
+            print(f"生成旅行计划失败: {str(e)}")
             import traceback
             traceback.print_exc()
             return self._create_fallback_plan(request)
     
+    # =========================================================================
+    # 辅助方法：构建查询字符串
+    # =========================================================================
     def _build_attraction_query(self, request: TripRequest) -> str:
-        """构建景点搜索查询 - 直接包含工具调用"""
+        """
+        构建景点搜索查询
+        
+        根据用户偏好生成搜索关键词，并构造 Agent 的输入
+        
+        Args:
+            request: 旅行请求
+            
+        Returns:
+            str: 景点搜索查询字符串
+        """
+        # 提取搜索关键词
         keywords = []
         if request.preferences:
             # 只取第一个偏好作为关键词
@@ -286,12 +404,25 @@ class MultiAgentTripPlanner:
         else:
             keywords = "景点"
 
-        # 直接返回工具调用格式
+        # 构建查询字符串（包含工具调用指令）
         query = f"请使用amap_maps_text_search工具搜索{request.city}的{keywords}相关景点。\n[TOOL_CALL:amap_maps_text_search:keywords={keywords},city={request.city}]"
         return query
 
     def _build_planner_query(self, request: TripRequest, attractions: str, weather: str, hotels: str = "") -> str:
-        """构建行程规划查询"""
+        """
+        构建行程规划查询
+        
+        整合所有 Agent 的结果，构造最终规划 Agent 的输入
+        
+        Args:
+            request: 旅行请求
+            attractions: 景点搜索结果
+            weather: 天气查询结果
+            hotels: 酒店搜索结果
+            
+        Returns:
+            str: 行程规划查询字符串
+        """
         query = f"""请根据以下信息生成{request.city}的{request.travel_days}天旅行计划:
 
 **基本信息:**
@@ -324,20 +455,27 @@ class MultiAgentTripPlanner:
 
         return query
     
+    # =========================================================================
+    # 辅助方法：解析 Agent 响应
+    # =========================================================================
     def _parse_response(self, response: str, request: TripRequest) -> TripPlan:
         """
-        解析Agent响应
+        解析 Agent 响应
+        
+        从 Agent 返回的文本中提取 JSON 数据并转换为 TripPlan 对象
         
         Args:
-            response: Agent响应文本
+            response: Agent 响应文本（可能包含 JSON 代码块）
             request: 原始请求
             
         Returns:
-            旅行计划
+            TripPlan: 旅行计划对象
         """
         try:
-            # 尝试从响应中提取JSON
-            # 查找JSON代码块
+            # ===================================================================
+            # 尝试从响应中提取 JSON
+            # Agent 可能返回 Markdown 格式的 JSON 代码块
+            # ===================================================================
             if "```json" in response:
                 json_start = response.find("```json") + 7
                 json_end = response.find("```", json_start)
@@ -363,12 +501,27 @@ class MultiAgentTripPlanner:
             return trip_plan
             
         except Exception as e:
-            print(f"⚠️  解析响应失败: {str(e)}")
+            # 解析失败时使用备用方案
+            print(f"解析响应失败: {str(e)}")
             print(f"   将使用备用方案生成计划")
             return self._create_fallback_plan(request)
     
+    # =========================================================================
+    # 辅助方法：创建备用计划
+    # =========================================================================
     def _create_fallback_plan(self, request: TripRequest) -> TripPlan:
-        """创建备用计划(当Agent失败时)"""
+        """
+        创建备用计划（当 Agent 失败时）
+        
+        生成一个简单的默认旅行计划，确保系统不会完全失败
+        类似 Java 的降级策略或默认实现
+        
+        Args:
+            request: 旅行请求
+            
+        Returns:
+            TripPlan: 备用旅行计划
+        """
         from datetime import datetime, timedelta
         
         # 解析日期
@@ -414,16 +567,46 @@ class MultiAgentTripPlanner:
         )
 
 
-# 全局多智能体系统实例
+# =============================================================================
+# 全局多智能体系统实例（单例模式）
+# 类似 Java Spring 的 @Service Bean 管理
+# =============================================================================
 _multi_agent_planner = None
 
 
 def get_trip_planner_agent() -> MultiAgentTripPlanner:
-    """获取多智能体旅行规划系统实例(单例模式)"""
+    """
+    获取多智能体旅行规划系统实例（单例模式）
+    
+    确保整个应用只创建一个 Agent 系统实例，节省资源
+    类似 Java: @Autowired private MultiAgentTripPlanner planner;
+    
+    Returns:
+        MultiAgentTripPlanner: 多智能体旅行规划系统实例
+    """
     global _multi_agent_planner
 
+    # 单例模式：首次调用时创建，后续直接返回
     if _multi_agent_planner is None:
         _multi_agent_planner = MultiAgentTripPlanner()
 
     return _multi_agent_planner
+
+
+# =============================================================================
+# 使用说明
+# =============================================================================
+# 在 Controller 中使用：
+#   from app.agents.trip_planner_agent import get_trip_planner_agent
+#   
+#   agent = get_trip_planner_agent()
+#   trip_plan = agent.plan_trip(request)
+#
+# 多 Agent 协作流程：
+#   1. Controller 调用 agent.plan_trip()
+#   2. Agent 系统内部协调 4 个子 Agent
+#   3. 每个子 Agent 调用 MCP 工具获取数据
+#   4. 规划 Agent 整合所有数据生成最终计划
+#   5. 返回 TripPlan 对象给 Controller
+# =============================================================================
 
