@@ -149,7 +149,7 @@ GET /npcs/张三/affinity?player_id=player
     "npc_name": "张三",
     "player_id": "player",
     "affinity": 65.0,
-    "level": "亲密",
+    "level": "亲密 ",
     "modifier": "友好热情,愿意多聊,会主动关心对方"
 }
 ```
